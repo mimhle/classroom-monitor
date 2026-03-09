@@ -5,11 +5,10 @@ import UserDropdown from "@/components/header/UserDropdown";
 import { useSidebar } from "@/context/SidebarContext";
 import Image from "next/image";
 import Link from "next/link";
-import React, { useState ,useEffect,useRef} from "react";
+import React, { useEffect, useRef, useState } from "react";
 
-const AppHeader: React.FC = () => {
+function AppHeader({ user }: { user: any }) {
     const [isApplicationMenuOpen, setApplicationMenuOpen] = useState(false);
-
     const { isMobileOpen, toggleSidebar, toggleMobileSidebar } = useSidebar();
 
     const handleToggle = () => {
@@ -134,12 +133,12 @@ const AppHeader: React.FC = () => {
                         {/* <!-- Notification Menu Area --> */}
                     </div>
                     {/* <!-- User Area --> */}
-                    <UserDropdown />
+                    <UserDropdown user={user}/>
 
                 </div>
             </div>
         </header>
     );
-};
+}
 
 export default AppHeader;

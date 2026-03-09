@@ -8,8 +8,10 @@ import AppHeader from "@/layout/AppHeader";
 
 export default function AdminLayout({
     children,
+    user,
 }: {
     children: React.ReactNode;
+    user: any;
 }) {
     const { isExpanded, isHovered, isMobileOpen } = useSidebar();
 
@@ -30,7 +32,7 @@ export default function AdminLayout({
                 className={`flex-1 transition-all  duration-300 ease-in-out ${mainContentMargin}`}
             >
                 {/* Header */}
-                <AppHeader/>
+                <AppHeader user={user}/>
                 {/* Page Content */}
                 <div className="p-4 mx-auto max-w-(--breakpoint-2xl) md:p-6">{children}</div>
             </div>
