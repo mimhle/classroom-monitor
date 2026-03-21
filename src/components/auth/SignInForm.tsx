@@ -4,14 +4,19 @@ import Input from "@/components/form/input/InputField";
 import Form from "@/components/form/Form";
 import Label from "@/components/form/Label";
 import Button from "@/components/ui/button/Button";
-import { ChevronLeftIcon, EyeCloseIcon, EyeIcon } from "@/icons";
+import { EyeCloseIcon, EyeIcon } from "@/icons";
 import Link from "next/link";
 import React, { useState } from "react";
-import { signIn } from "@/libs/auth";
+import { useNotification } from "@/components/ui/notification";
+
+type LoginResult = { ok: true } | { ok: false; error: string };
 
 export default function SignInForm() {
     const [showPassword, setShowPassword] = useState(false);
     const [isChecked, setIsChecked] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const { notify } = useNotification();
+
     return (
         <div className="flex flex-col flex-1 lg:w-1/2 w-full">
             <div className="flex flex-col justify-center flex-1 w-full max-w-md mx-auto">
@@ -25,14 +30,38 @@ export default function SignInForm() {
                         </p>
                     </div>
                     <div>
-                        <Form onSubmit={(e) => {
-                            signIn((e.target as any).username.value, (e.target as any).password.value).then((success) => {
-                                if (success) {
+                        <Form onSubmit={async (e) => {
+                            e.preventDefault();
+                            const form = e.target as HTMLFormElement & {
+                                username: { value: string };
+                                password: { value: string };
+                            };
+
+                            setIsSubmitting(true);
+                            try {
+                                const res = await fetch("/api/auth/login", {
+                                    method: "POST",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        username: form.username.value,
+                                        password: form.password.value,
+                                    }),
+                                });
+
+                                const data = (await res.json().catch(() => null)) as LoginResult | null;
+
+                                if (res.ok && data?.ok) {
                                     window.location.href = "/";
-                                } else {
-                                    alert("Invalid username or password");
+                                    return;
                                 }
-                            });
+
+                                const msg =
+                                    (data && "error" in data && data.error) ||
+                                    "Invalid username or password";
+                                notify({ variant: "error", title: "Sign in failed", message: msg });
+                            } finally {
+                                setIsSubmitting(false);
+                            }
                         }}>
                             <div className="space-y-6">
                                 <div>
@@ -56,7 +85,7 @@ export default function SignInForm() {
                                             className="absolute z-30 -translate-y-1/2 cursor-pointer right-4 top-1/2"
                                         >
                                             {showPassword ? <EyeIcon className="fill-gray-500 dark:fill-gray-400"/>
-                                            : <EyeCloseIcon className="fill-gray-500 dark:fill-gray-400"/>}
+                                                : <EyeCloseIcon className="fill-gray-500 dark:fill-gray-400"/>}
                                         </span>
                                     </div>
                                 </div>
@@ -76,8 +105,8 @@ export default function SignInForm() {
                                     </Link>
                                 </div>
                                 <div>
-                                    <Button className="w-full" size="sm" type="submit">
-                                        Sign in
+                                    <Button className="w-full" size="sm" type="submit" disabled={isSubmitting}>
+                                        {isSubmitting ? "Signing in..." : "Sign in"}
                                     </Button>
                                 </div>
                             </div>

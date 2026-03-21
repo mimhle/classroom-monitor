@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
@@ -15,7 +15,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
     {
-        icon: <GridIcon />,
+        icon: <GridIcon/>,
         name: "Dashboard",
         path: "/",
     },
@@ -33,7 +33,7 @@ const navItems: NavItem[] = [
         path: "/users",
     },
     {
-        icon: <UserCircleIcon />,
+        icon: <UserCircleIcon/>,
         name: "User Profile",
         path: "/profile",
     },
@@ -54,7 +54,7 @@ const AppSidebar: React.FC = () => {
                         <button
                             onClick={() => handleSubmenuToggle(index, menuType)}
                             className={`menu-item group  ${
-                                openSubmenu?.type === menuType && openSubmenu?.index === index
+                                effectiveOpenSubmenu?.type === menuType && effectiveOpenSubmenu?.index === index
                                     ? "menu-item-active"
                                     : "menu-item-inactive"
                             } cursor-pointer ${
@@ -65,7 +65,7 @@ const AppSidebar: React.FC = () => {
                         >
               <span
                   className={` ${
-                      openSubmenu?.type === menuType && openSubmenu?.index === index
+                      effectiveOpenSubmenu?.type === menuType && effectiveOpenSubmenu?.index === index
                           ? "menu-item-icon-active"
                           : "menu-item-icon-inactive"
                   }`}
@@ -78,8 +78,8 @@ const AppSidebar: React.FC = () => {
                             {(isExpanded || isHovered || isMobileOpen) && (
                                 <ChevronDownIcon
                                     className={`ml-auto w-5 h-5 transition-transform duration-200  ${
-                                        openSubmenu?.type === menuType &&
-                                        openSubmenu?.index === index
+                                        effectiveOpenSubmenu?.type === menuType &&
+                                        effectiveOpenSubmenu?.index === index
                                             ? "rotate-180 text-brand-500"
                                             : ""
                                     }`}
@@ -111,16 +111,11 @@ const AppSidebar: React.FC = () => {
                     )}
                     {nav.subItems && (isExpanded || isHovered || isMobileOpen) && (
                         <div
-                            ref={(el) => {
-                                subMenuRefs.current[`${menuType}-${index}`] = el;
-                            }}
-                            className="overflow-hidden transition-all duration-300"
-                            style={{
-                                height:
-                                    openSubmenu?.type === menuType && openSubmenu?.index === index
-                                        ? `${subMenuHeight[`${menuType}-${index}`]}px`
-                                        : "0px",
-                            }}
+                            className={`overflow-hidden transition-all duration-300 ${
+                                effectiveOpenSubmenu?.type === menuType && effectiveOpenSubmenu?.index === index
+                                    ? "max-h-96"
+                                    : "max-h-0"
+                            }`}
                         >
                             <ul className="mt-2 space-y-1 ml-9">
                                 {nav.subItems.map((subItem) => (
@@ -173,49 +168,23 @@ const AppSidebar: React.FC = () => {
         type: "main" | "others";
         index: number;
     } | null>(null);
-    const [subMenuHeight, setSubMenuHeight] = useState<Record<string, number>>(
-        {}
-    );
-    const subMenuRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
     // const isActive = (path: string) => path === pathname;
     const isActive = useCallback((path: string) => path === pathname, [pathname]);
 
-    useEffect(() => {
-        // Check if the current path matches any submenu item
-        let submenuMatched = false;
-        navItems.forEach((nav, index) => {
-            if (nav.subItems) {
-                nav.subItems.forEach((subItem) => {
-                    if (isActive(subItem.path)) {
-                        setOpenSubmenu({
-                            type: "main",
-                            index,
-                        });
-                        submenuMatched = true;
-                    }
-                });
-            }
-        });
-
-        // If no submenu item matches, close the open submenu
-        if (!submenuMatched) {
-            setOpenSubmenu(null);
+    // Derive the submenu that should be open for the current route (no memoization needed).
+    let routeOpenSubmenu: { type: "main" | "others"; index: number } | null = null;
+    navItems.forEach((nav, index) => {
+        if (nav.subItems) {
+            nav.subItems.forEach((subItem) => {
+                if (pathname === subItem.path) {
+                    routeOpenSubmenu = { type: "main", index };
+                }
+            });
         }
-    }, [pathname,isActive]);
+    });
 
-    useEffect(() => {
-        // Set the height of the submenu items when the submenu is opened
-        if (openSubmenu !== null) {
-            const key = `${openSubmenu.type}-${openSubmenu.index}`;
-            if (subMenuRefs.current[key]) {
-                setSubMenuHeight((prevHeights) => ({
-                    ...prevHeights,
-                    [key]: subMenuRefs.current[key]?.scrollHeight || 0,
-                }));
-            }
-        }
-    }, [openSubmenu]);
+    const effectiveOpenSubmenu = openSubmenu ?? routeOpenSubmenu;
 
     const handleSubmenuToggle = (index: number, menuType: "main" | "others") => {
         setOpenSubmenu((prevOpenSubmenu) => {

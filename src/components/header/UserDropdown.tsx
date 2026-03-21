@@ -4,8 +4,8 @@ import React, { useState } from "react";
 import { Dropdown } from "../ui/dropdown/Dropdown";
 import { DropdownItem } from "../ui/dropdown/DropdownItem";
 import Button from "@/components/ui/button/Button";
-import { signOut } from "@/libs/auth";
 import Badge from "@/components/ui/badge/Badge";
+import { signOut } from "@/libs/auth";
 
 export default function UserDropdown({ user }: { user: any }) {
     const [isOpen, setIsOpen] = useState(false);
@@ -126,8 +126,11 @@ export default function UserDropdown({ user }: { user: any }) {
                     variant={"outline"}
                     className="flex items-center gap-3 px-3 py-2 mt-3 font-medium text-gray-700 rounded-lg group text-theme-sm hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-300"
                     onClick={async () => {
-                        if (await signOut()) {
+                        const res_ok = await signOut();
+                        if (res_ok) {
                             window.location.href = "/signin";
+                        } else {
+                            alert("Failed to sign out");
                         }
                     }}
                 >
