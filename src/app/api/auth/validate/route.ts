@@ -21,9 +21,6 @@ export async function GET(req: Request) {
             cache: "no-store",
         });
 
-        console.debug("Auth validation request sent to backend with cookies:", cookieHeader);
-        console.log("Auth validation upstream response:", upstream.status, upstream.statusText);
-
         if (!upstream.ok) {
             return NextResponse.json({ ok: false }, { status: 401 });
         }

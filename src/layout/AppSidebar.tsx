@@ -1,31 +1,38 @@
 "use client";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
-import { ChevronDownIcon, GridIcon, UserCircleIcon, UserMultipleIcon, VectorNodesIcon } from "../icons/index";
+import { ChevronDownIcon, GridIcon, PlusIcon, UserCircleIcon, UserMultipleIcon, VectorNodesIcon } from "../icons/index";
+import { getBranches } from "@/libs/actions";
+import Button from "@/components/ui/button/Button";
 
 type NavItem = {
     name: string;
     icon: React.ReactNode;
     path?: string;
-    subItems?: { name: string; path: string; pro?: boolean; new?: boolean }[];
+    subItems?: {
+        name: string;
+        path?: string;
+        pro?: boolean;
+        new?: boolean;
+        onclick?: () => void;
+    }[];
 };
 
-const navItems: NavItem[] = [
+type Branch = {
+    branch_id: string;
+    group_id: string;
+    name: string;
+    alert: any;
+};
+
+const navItemStatic: NavItem[] = [
     {
         icon: <GridIcon/>,
         name: "Dashboard",
         path: "/",
-    },
-    {
-        icon: <VectorNodesIcon/>,
-        name: "Branches",
-        subItems: [
-            { name: "Branch 1", path: "/branches/1" },
-            { name: "Branch 2", path: "/branches/2" },
-        ],
     },
     {
         icon: <UserMultipleIcon/>,
@@ -40,8 +47,17 @@ const navItems: NavItem[] = [
 ];
 
 const AppSidebar: React.FC = () => {
+    const [navItems, setNavItems] = useState<Branch[]>([]);
     const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
     const pathname = usePathname();
+
+    useEffect(() => {
+        getBranches().then((data) => {
+            setNavItems(data.data);
+        }).catch((error) => {
+            console.error("Error fetching branches:", error);
+        });
+    }, []);
 
     const renderMenuItems = (
         navItems: NavItem[],
@@ -49,7 +65,7 @@ const AppSidebar: React.FC = () => {
     ) => (
         <ul className="flex flex-col gap-4">
             {navItems.map((nav, index) => (
-                <li key={nav.name}>
+                <li key={`${nav.name}${nav.path}`}>
                     {nav.subItems ? (
                         <button
                             onClick={() => handleSubmenuToggle(index, menuType)}
@@ -119,8 +135,8 @@ const AppSidebar: React.FC = () => {
                         >
                             <ul className="mt-2 space-y-1 ml-9">
                                 {nav.subItems.map((subItem) => (
-                                    <li key={subItem.name}>
-                                        <Link
+                                    <li key={`${subItem.name}${subItem.path}`}>
+                                        {subItem.path ? <Link
                                             href={subItem.path}
                                             className={`menu-dropdown-item ${
                                                 isActive(subItem.path)
@@ -130,17 +146,13 @@ const AppSidebar: React.FC = () => {
                                         >
                                             {subItem.name}
                                             <span className="flex items-center gap-1 ml-auto">
-                        {subItem.new && (
-                            <span
-                                className={`ml-auto ${
-                                    isActive(subItem.path)
-                                        ? "menu-dropdown-badge-active"
-                                        : "menu-dropdown-badge-inactive"
-                                } menu-dropdown-badge `}
-                            >
-                            new
-                          </span>
-                        )}
+                                                {subItem.new && (<span
+                                                    className={`ml-auto ${
+                                                        isActive(subItem.path)
+                                                            ? "menu-dropdown-badge-active"
+                                                            : "menu-dropdown-badge-inactive"
+                                                    } menu-dropdown-badge `}
+                                                >new</span>)}
                                                 {subItem.pro && (
                                                     <span
                                                         className={`ml-auto ${
@@ -148,12 +160,22 @@ const AppSidebar: React.FC = () => {
                                                                 ? "menu-dropdown-badge-active"
                                                                 : "menu-dropdown-badge-inactive"
                                                         } menu-dropdown-badge `}
-                                                    >
-                            pro
-                          </span>
+                                                    >pro</span>
                                                 )}
-                      </span>
-                                        </Link>
+                                            </span>
+                                        </Link> : <Button
+                                            size={"sm"}
+                                            variant={"outline"}
+                                            startIcon={<PlusIcon/>}
+                                            onClick={subItem.onclick}
+                                            className={`w-full menu-dropdown-item cursor-pointer ${
+                                                subItem.onclick
+                                                    ? "menu-dropdown-item-inactive"
+                                                    : "menu-dropdown-item-disabled"
+                                            }`}
+                                        >
+                                            {subItem.name}
+                                        </Button>}
                                     </li>
                                 ))}
                             </ul>
@@ -174,7 +196,7 @@ const AppSidebar: React.FC = () => {
 
     // Derive the submenu that should be open for the current route (no memoization needed).
     let routeOpenSubmenu: { type: "main" | "others"; index: number } | null = null;
-    navItems.forEach((nav, index) => {
+    navItemStatic.forEach((nav, index) => {
         if (nav.subItems) {
             nav.subItems.forEach((subItem) => {
                 if (pathname === subItem.path) {
@@ -253,7 +275,26 @@ const AppSidebar: React.FC = () => {
                 <nav className="mb-6">
                     <div className="flex flex-col gap-4">
                         <div>
-                            {renderMenuItems(navItems, "main")}
+                            {renderMenuItems([
+                                ...navItemStatic.slice(0, 1),
+                                {
+                                    icon: <VectorNodesIcon/>,
+                                    name: "Branches",
+                                    subItems: [
+                                        ...navItems.map((branch) => ({
+                                            name: branch.name,
+                                            path: `/branches/${branch.branch_id}`,
+                                        })),
+                                        {
+                                            name: "New branch",
+                                            onclick: () => {
+                                                console.log("Create new branch");
+                                            }
+                                        }
+                                    ],
+                                },
+                                ...navItemStatic.slice(1),
+                            ], "main")}
                         </div>
                     </div>
                 </nav>

@@ -2,7 +2,7 @@
 
 import { cookies, headers } from "next/headers";
 
-async function getHostUrl() {
+export async function getHostUrl() {
     const headersList = await headers();
     const host = headersList.get("host");
     const protocol = host?.startsWith("localhost") ? "http" : "https";
@@ -10,20 +10,16 @@ async function getHostUrl() {
 }
 
 export async function checkAuth() {
-    try {
-        const res = await fetch(`${await getHostUrl()}/api/auth/validate`, {
-            method: "GET",
-            cache: "no-store",
-            headers: {
-                cookie: (await cookies()).toString(),
-            },
-        }).catch(e => {
-            throw e;
-        });
-        return res.ok;
-    } catch {
-        return false;
-    }
+    const res = await fetch(`${await getHostUrl()}/api/auth/validate`, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+            cookie: (await cookies()).toString(),
+        },
+    }).catch(e => {
+        throw e;
+    });
+    return res.ok;
 }
 
 export async function signIn(username: string, password: string) {
