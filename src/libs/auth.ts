@@ -1,6 +1,14 @@
 "use server";
 
 import { cookies, headers } from "next/headers";
+import { redirect } from "next/navigation";
+
+export type CurrentUser = {
+    id?: string;
+    username?: string;
+    role?: string;
+    [key: string]: any;
+} | null;
 
 export async function getHostUrl() {
     const headersList = await headers();
@@ -43,18 +51,40 @@ export async function signOut() {
     return res.ok;
 }
 
-export async function getCurrentUser() {
-    // For iots-backend, the session stores a 'user' value server-side; there's no /me endpoint.
-    // We decode nothing from the cookie. Instead, we return a minimal placeholder user if authenticated.
+export async function getCurrentUser(): Promise<CurrentUser> {
     const authenticated = await checkAuth();
     if (!authenticated) return null;
 
-    // If you later add /api/auth/me on the backend, swap this for that.
-    return {
-        firstName: "User",
-        lastName: "",
-        email: "",
-        role: "",
-        username: "",
-    };
+    const res = await fetch(`${await getHostUrl()}/api/user`, {
+        method: "GET",
+        cache: "no-store",
+        headers: {
+            cookie: (await cookies()).toString(),
+        },
+    });
+
+    if (!res.ok) {
+        throw new Error(`Failed to fetch user info: ${res.statusText}`);
+    }
+
+    return res.json().then(r => {
+        return r.data;
+    });
+}
+
+export async function requireAuth(opts?: { redirectTo?: string }) {
+    const user = await getCurrentUser();
+    if (!user) {
+        redirect(opts?.redirectTo ?? "/signin");
+    }
+    return user;
+}
+
+export async function requireRole(role: string, opts?: { redirectTo?: string }) {
+    const user = await requireAuth(opts);
+    if ((user as any)?.role !== role) {
+        // Keep behavior simple: bounce non-admins away.
+        redirect(opts?.redirectTo ?? "/");
+    }
+    return user;
 }

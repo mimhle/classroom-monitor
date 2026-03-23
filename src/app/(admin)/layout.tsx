@@ -1,7 +1,7 @@
 "use server";
 
 import AdminLayout from "@/app/(admin)/AdminLayout";
-import { checkAuth, getCurrentUser } from "@/libs/auth";
+import { checkAuth } from "@/libs/auth";
 import { redirect } from "next/navigation"
 
 export default async function Layout({
@@ -13,9 +13,7 @@ export default async function Layout({
         redirect("/signin");
     }
 
-    const user = await getCurrentUser();
-
     return (
-        <AdminLayout user={user}>{children}</AdminLayout>
+        <AdminLayout>{children}</AdminLayout>
     );
 }

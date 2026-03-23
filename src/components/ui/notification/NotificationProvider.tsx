@@ -4,15 +4,18 @@ import React, { createContext, useCallback, useContext, useMemo, useRef, useStat
 
 export type NotificationVariant = "success" | "error" | "warning" | "info";
 
+type NotificationStatus = "open" | "closing";
+
 export type Notification = {
     id: string;
     variant: NotificationVariant;
     title?: string;
     message: string;
     durationMs?: number;
+    status?: NotificationStatus;
 };
 
-type NotifyInput = Omit<Notification, "id">;
+type NotifyInput = Omit<Notification, "id" | "status">;
 
 type NotificationContextValue = {
     notify: (input: NotifyInput) => void;
@@ -26,6 +29,8 @@ function randomId() {
     return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+const EXIT_MS = 220;
+
 export function NotificationProvider({
     children,
 }: {
@@ -33,20 +38,43 @@ export function NotificationProvider({
 }) {
     const [items, setItems] = useState<Notification[]>([]);
     const timeouts = useRef<Map<string, number>>(new Map());
+    const closeTimeouts = useRef<Map<string, number>>(new Map());
 
-    const dismiss = useCallback((id: string) => {
+    const removeNow = useCallback((id: string) => {
         setItems((prev) => prev.filter((n) => n.id !== id));
         const t = timeouts.current.get(id);
         if (t) {
             window.clearTimeout(t);
             timeouts.current.delete(id);
         }
+        const ct = closeTimeouts.current.get(id);
+        if (ct) {
+            window.clearTimeout(ct);
+            closeTimeouts.current.delete(id);
+        }
     }, []);
+
+    const dismiss = useCallback((id: string) => {
+        // idempotent: if already closing, do nothing.
+        setItems((prev) => prev.map((n) => (n.id === id ? { ...n, status: "closing" } : n)));
+
+        const t = timeouts.current.get(id);
+        if (t) {
+            window.clearTimeout(t);
+            timeouts.current.delete(id);
+        }
+
+        if (closeTimeouts.current.has(id)) return;
+        const ct = window.setTimeout(() => removeNow(id), EXIT_MS);
+        closeTimeouts.current.set(id, ct);
+    }, [removeNow]);
 
     const clear = useCallback(() => {
         setItems([]);
         for (const t of timeouts.current.values()) window.clearTimeout(t);
+        for (const t of closeTimeouts.current.values()) window.clearTimeout(t);
         timeouts.current.clear();
+        closeTimeouts.current.clear();
     }, []);
 
     const notify = useCallback(
@@ -54,6 +82,7 @@ export function NotificationProvider({
             const n: Notification = {
                 id: randomId(),
                 durationMs: 4000,
+                status: "open",
                 ...input,
             };
             setItems((prev) => [n, ...prev].slice(0, 5));
@@ -109,9 +138,17 @@ function NotificationCard({
         info: { border: "border-blue-light-500/40", icon: "text-blue-light-500" },
     };
 
+    const isClosing = n.status === "closing";
+
     return (
         <div
-            className={`rounded-2xl border ${styles[n.variant].border} bg-white p-4 shadow-theme-lg dark:border-gray-800 dark:bg-gray-dark`}
+            className={
+                `rounded-2xl border ${styles[n.variant].border} bg-white p-4 shadow-theme-lg dark:border-gray-800 dark:bg-gray-dark ` +
+                "transform-gpu transition-all duration-200 ease-out motion-reduce:transform-none motion-reduce:transition-none " +
+                (isClosing
+                    ? "opacity-0 translate-x-4 pointer-events-none"
+                    : "opacity-100 translate-x-0 animate-[notification-in_220ms_ease-out]")
+            }
             role="status"
         >
             <div className="flex items-start gap-3">
@@ -146,6 +183,19 @@ function NotificationCard({
                     </svg>
                 </button>
             </div>
+            {/* Tailwind arbitrary animation uses this keyframe name; define via global CSS if missing. */}
+            <style jsx global>{`
+                @keyframes notification-in {
+                    from {
+                        opacity: 0;
+                        transform: translate3d(16px, 0, 0);
+                    }
+                    to {
+                        opacity: 1;
+                        transform: translate3d(0, 0, 0);
+                    }
+                }
+            `}</style>
         </div>
     );
 }

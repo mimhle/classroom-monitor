@@ -1,19 +1,27 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { useSidebar } from "@/context/SidebarContext";
 import AppSidebar from "@/layout/AppSidebar";
 import Backdrop from "@/layout/Backdrop";
 import AppHeader from "@/layout/AppHeader";
+import { type CurrentUser, getCurrentUser } from "@/libs/auth";
 
 export default function AdminLayout({
     children,
-    user,
 }: {
     children: React.ReactNode;
-    user: any;
 }) {
     const { isExpanded, isHovered, isMobileOpen } = useSidebar();
+    const [user, setUser] = useState<CurrentUser>(null);
+
+    useEffect(() => {
+        getCurrentUser().then(user => {
+            setUser(user);
+        }).catch(e => {
+            console.error("Failed to fetch current user:", e);
+        });
+    }, []);
 
     // Dynamic class for main content margin based on sidebar state
     const mainContentMargin = isMobileOpen
