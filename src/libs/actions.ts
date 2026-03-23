@@ -1,5 +1,7 @@
 "use client";
 
+import { emitBranchesChanged } from "@/libs/branchEvents";
+
 export async function getBranches() {
     return fetch(`/api/branches`, {
         method: "GET",
@@ -32,7 +34,10 @@ export async function createBranch(input: CreateBranchInput) {
                 `Failed to create branch: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
             );
         }
-        return res.json();
+
+        const json = await res.json();
+        emitBranchesChanged();
+        return json;
     });
 }
 
@@ -53,7 +58,6 @@ export async function getBranch(id: string) {
     });
 }
 
-
 export async function deleteBranch(id: string) {
     return fetch(`/api/branches/${encodeURIComponent(id)}`, {
         method: "DELETE",
@@ -65,6 +69,8 @@ export async function deleteBranch(id: string) {
                 `Failed to delete branch: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
             );
         }
+
+        emitBranchesChanged();
     });
 }
 
@@ -84,6 +90,7 @@ export async function updateBranch(id: string, input: CreateBranchInput) {
             );
         }
         return res.json().then((data) => {
+            emitBranchesChanged();
             return data.data;
         });
     });

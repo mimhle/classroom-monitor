@@ -2,10 +2,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
 import { ChevronDownIcon, GridIcon, PlusIcon, UserCircleIcon, UserMultipleIcon, VectorNodesIcon } from "../icons/index";
 import { createBranch, getBranches } from "@/libs/actions";
+import { onBranchesChanged } from "@/libs/branchEvents";
 import { type CurrentUser, getCurrentUser } from "@/libs/auth";
 import Button from "@/components/ui/button/Button";
 import { Modal } from "@/components/ui/modal";
@@ -57,6 +58,7 @@ const AppSidebar: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<CurrentUser>(null);
     const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
     const pathname = usePathname();
+    const router = useRouter();
 
     const createBranchModal = useModal(false);
     const [branchName, setBranchName] = useState("");
@@ -72,6 +74,14 @@ const AppSidebar: React.FC = () => {
     useEffect(() => {
         loadBranches().catch((error) => {
             console.error("Error fetching branches:", error);
+        });
+    }, [loadBranches]);
+
+    useEffect(() => {
+        return onBranchesChanged(() => {
+            loadBranches().catch((error) => {
+                console.error("Error refreshing branches:", error);
+            });
         });
     }, [loadBranches]);
 
@@ -109,14 +119,24 @@ const AppSidebar: React.FC = () => {
             setIsCreatingBranch(true);
             setCreateBranchError(null);
             try {
-                await createBranch({ name });
+                const res = (await createBranch({ name })) as any;
+
+                // Support typical API response shapes: { data: { branch_id } } or { branch_id }.
+                const createdBranch = res?.data ?? res;
+                const createdBranchId: string | undefined = createdBranch?.branch_id;
+
                 await loadBranches();
                 closeCreateBranchModal();
+
                 notify({
                     variant: "success",
                     title: "Branch created",
                     message: `“${name}” was created successfully.`,
                 });
+
+                if (createdBranchId) {
+                    router.push(`/branches/${createdBranchId}`);
+                }
             } catch (err) {
                 const message = err instanceof Error ? err.message : "Failed to create branch.";
                 setCreateBranchError(message);
@@ -124,7 +144,7 @@ const AppSidebar: React.FC = () => {
                 setIsCreatingBranch(false);
             }
         },
-        [branchName, closeCreateBranchModal, loadBranches, notify],
+        [branchName, closeCreateBranchModal, loadBranches, notify, router],
     );
 
     const renderMenuItems = (

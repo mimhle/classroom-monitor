@@ -23,7 +23,7 @@ type User = {
 export default function UsersAdmin() {
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
+    const [, setError] = useState<string | null>(null);
     const { notify } = useNotification();
 
     const createModal = useModal(false);
@@ -45,11 +45,13 @@ export default function UsersAdmin() {
             // actions.getUsers() currently returns the raw JSON; normalize a bit.
             setUsers((data?.data ?? data?.users ?? []) as User[]);
         } catch (e: any) {
-            setError(e?.message ?? "Failed to load users");
+            const message = e?.message ?? "Failed to load users";
+            setError(message);
+            notify({ variant: "error", title: "Failed to load users", message });
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [notify]);
 
     useEffect(() => {
         load();
@@ -58,7 +60,9 @@ export default function UsersAdmin() {
     const handleCreate = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
         if (!newUser.username.trim()) {
-            setError("Username is required");
+            const message = "Username is required";
+            setError(message);
+            notify({ variant: "error", title: "Validation error", message });
             return;
         }
         setCreating(true);
@@ -70,7 +74,9 @@ export default function UsersAdmin() {
             notify({ variant: "success", title: "User created", message: "User was created successfully." });
             await load();
         } catch (e: any) {
-            setError(e?.message ?? "Failed to create user");
+            const message = e?.message ?? "Failed to create user";
+            setError(message);
+            notify({ variant: "error", title: "Failed to create user", message });
         } finally {
             setCreating(false);
         }
@@ -84,7 +90,9 @@ export default function UsersAdmin() {
             notify({ variant: "success", title: "User deleted", message: "User was deleted successfully." });
             await load();
         } catch (e: any) {
-            setError(e?.message ?? "Failed to delete user");
+            const message = e?.message ?? "Failed to delete user";
+            setError(message);
+            notify({ variant: "error", title: "Failed to delete user", message });
         }
     }, [load, notify]);
 
@@ -98,12 +106,7 @@ export default function UsersAdmin() {
                 <Button onClick={createModal.openModal}>New user</Button>
             </div>
 
-            {error && (
-                <div
-                    className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
-                    {error}
-                </div>
-            )}
+            {/* Errors are surfaced via notifications; keep state for potential future inline UX. */}
 
             {loading ? (
                 <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>
@@ -112,6 +115,7 @@ export default function UsersAdmin() {
                     <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-800">
                         <thead className="bg-gray-50 dark:bg-gray-900/40">
                         <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">ID</th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Username</th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400">Role</th>
                             <th className="px-4 py-3"></th>
@@ -120,6 +124,7 @@ export default function UsersAdmin() {
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
                         {sortedUsers.map((u) => (
                             <tr key={u.user_id} className="bg-white dark:bg-gray-900">
+                                <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{u.user_id}</td>
                                 <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{u.username}</td>
                                 <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{u.role}</td>
                                 <td className="px-4 py-3 text-right">
@@ -130,7 +135,7 @@ export default function UsersAdmin() {
                         ))}
                         {sortedUsers.length === 0 && (
                             <tr>
-                                <td className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400" colSpan={5}>No users
+                                <td className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400" colSpan={4}>No users
                                     found.
                                 </td>
                             </tr>
