@@ -190,6 +190,7 @@ export async function updateUser(id: string, input: CreateUserInput) {
 
 export type Sensor = {
     sensor_id: string;
+    branch_id: string;
     name: string;
     status: string;
     updated_at: string;
@@ -253,8 +254,13 @@ export type SensorData = {
     items: Record<"value" | "created_at", string>[];
 };
 
-export async function getSensorData(sensorId: string, limit: number = 100) {
-    return fetch(`/api/sensors/${encodeURIComponent(sensorId)}/values?limit=${limit}`, {
+export async function getSensorData(
+    sensorId: string,
+    limit: number = 100,
+    from: string | null = null,
+    to: string | null = null,
+) {
+    return fetch(`/api/sensors/${encodeURIComponent(sensorId)}/values?limit=${limit}${from ? `&from_time=${encodeURIComponent(from)}` : ""}${to ? `&to_time=${encodeURIComponent(to)}` : ""}`, {
         method: "GET",
         cache: "no-store",
     }).then(async (res) => {
@@ -289,6 +295,27 @@ export async function createSensor(input: CreateSensorInput) {
             const text = await res.text().catch(() => "");
             throw new Error(
                 `Failed to create sensor: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function updateSensor(id: string, input: CreateSensorInput) {
+    return fetch(`/api/sensors/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to update sensor: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
             );
         }
         return res.json().then((data) => {

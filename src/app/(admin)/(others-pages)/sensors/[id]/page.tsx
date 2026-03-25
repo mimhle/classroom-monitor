@@ -1,19 +1,24 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 import ComponentCard from "@/components/common/ComponentCard";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
-import { deleteSensor, getSensor, getSensorData, Sensor, SensorData } from "@/libs/actions";
+import { deleteSensor, getSensor, getSensorData, Sensor, SensorData, updateSensor } from "@/libs/actions";
 import Button from "@/components/ui/button/Button";
-import { TrashBinIcon } from "@/icons";
+import { PencilIcon, TrashBinIcon } from "@/icons";
 import { useNotification } from "@/components/ui/notification";
 import { parseSensorValue } from "@/libs/sensorValue";
 import SensorFieldsLineChart, {
     type SensorFieldsLineChartSeries,
 } from "@/components/charts/line/SensorFieldsLineChart";
 import Checkbox from "@/components/form/input/Checkbox";
+import { Modal } from "@/components/ui/modal";
+import { useModal } from "@/hooks/useModal";
+import Label from "@/components/form/Label";
+import Input from "@/components/form/input/InputField";
+import DateTimeRangePicker, { type DateTimeRange } from "@/components/form/DateTimeRangePicker";
 
 function formatCellValue(v: unknown) {
     if (v === null || v === undefined) return "";
@@ -86,6 +91,21 @@ function toEpochMs(v: unknown): number | null {
     return null;
 }
 
+function rowKey(row: any): string {
+    if (!row) return "";
+    const id = row?.id;
+    if (id !== null && id !== undefined && id !== "") return String(id);
+    const createdAt = row?.created_at ?? row?.timestamp ?? row?.time ?? "";
+    const value = row?.value ?? "";
+    return `${String(createdAt)}|${String(value)}`;
+}
+
+function newestFirstSort(rows: any[]): any[] {
+    const getTime = (r: any) =>
+        toEpochMs(r?.timestamp) ?? toEpochMs(r?.time) ?? toEpochMs(r?.created_at) ?? toEpochMs(r?.updated_at) ?? 0;
+    return rows.sort((a, b) => getTime(b) - getTime(a));
+}
+
 export default function SensorPage() {
     const params = useParams<{ id: string }>();
     const router = useRouter();
@@ -99,9 +119,101 @@ export default function SensorPage() {
     const [error, setError] = useState<string | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
 
+    const pollingRef = useRef<{ timer: any; stop: boolean; inFlight: boolean }>({
+        timer: null,
+        stop: false,
+        inFlight: false,
+    });
+
+    // Edit sensor modal (Branch-style)
+    const editSensorModal = useModal(false);
+    const [sensorName, setSensorName] = useState("");
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
+
     // Chart field selection (per sensor, persisted)
     const [selectedFields, setSelectedFields] = useState<string[]>([]);
     const [selectionTouched, setSelectionTouched] = useState(false);
+
+    // Time range filter (per sensor, persisted). Sent to API as ISO 8601.
+    // We keep a draft range (what the picker currently shows) separate from an applied range
+    // (what the API actually uses) to avoid data reloading while the user is still selecting time.
+    const [draftRange, setDraftRange] = useState<DateTimeRange>({ from: null, to: null });
+    const [appliedRange, setAppliedRange] = useState<DateTimeRange>({ from: null, to: null });
+    const [rangeTouched, setRangeTouched] = useState(false);
+    const [isRangeLoading, setIsRangeLoading] = useState(false);
+
+    const fromIso = useMemo(
+        () => (appliedRange.from ? appliedRange.from.toISOString() : null),
+        [appliedRange.from],
+    );
+    const toIso = useMemo(
+        () => (appliedRange.to ? appliedRange.to.toISOString() : null),
+        [appliedRange.to],
+    );
+    const isRangeActive = Boolean(fromIso || toIso);
+
+    const isDraftDifferentFromApplied = useMemo(() => {
+        const dFrom = draftRange.from?.getTime?.() ?? null;
+        const dTo = draftRange.to?.getTime?.() ?? null;
+        const aFrom = appliedRange.from?.getTime?.() ?? null;
+        const aTo = appliedRange.to?.getTime?.() ?? null;
+        return dFrom !== aFrom || dTo !== aTo;
+    }, [draftRange.from, draftRange.to, appliedRange.from, appliedRange.to]);
+
+    function openEditSensorModal() {
+        setSaveError(null);
+        setSensorName(sensor?.name ?? "");
+        editSensorModal.openModal();
+    }
+
+    function closeEditSensorModal() {
+        editSensorModal.closeModal();
+        setSaveError(null);
+        setSensorName("");
+    }
+
+    async function onEditSensorSubmit(e: React.FormEvent) {
+        e.preventDefault();
+
+        if (!id || !sensor) {
+            setSaveError("Missing sensor id.");
+            return;
+        }
+
+        const name = sensorName.trim();
+        if (!name) {
+            setSaveError("Sensor name is required.");
+            return;
+        }
+
+        if (name === sensor.name) {
+            closeEditSensorModal();
+            return;
+        }
+
+        // updateSensor() requires branch_id.
+        // We expect it to come from getSensor(). If it's missing, it's a backend/data issue.
+        const branch_id = sensor.branch_id;
+
+        setIsSaving(true);
+        setSaveError(null);
+        try {
+            const updated = (await updateSensor(id, { name, branch_id })) as any;
+            setSensor((prev) => (prev ? { ...prev, ...(updated ?? {}), name } : prev));
+            closeEditSensorModal();
+            notify({
+                variant: "success",
+                title: "Sensor updated",
+                message: `Sensor renamed to “${name}”.`,
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to update sensor.";
+            setSaveError(message);
+        } finally {
+            setIsSaving(false);
+        }
+    }
 
     async function onDelete() {
         if (!id || !sensor) {
@@ -139,6 +251,7 @@ export default function SensorPage() {
     }
 
     useEffect(() => {
+        // This fetch reacts to APPLIED range only.
         let cancelled = false;
 
         async function run() {
@@ -148,11 +261,12 @@ export default function SensorPage() {
             setError(null);
             try {
                 const s = await getSensor(id);
-                const res = await getSensorData(id, 100);
+                const res = await getSensorData(id, 100, fromIso, toIso);
 
                 if (cancelled) return;
 
                 setSensor(s);
+
                 setData({
                     sensor: res?.sensor ?? id,
                     count: typeof res?.count === "number" ? res.count : 0,
@@ -174,7 +288,89 @@ export default function SensorPage() {
         return () => {
             cancelled = true;
         };
-    }, [id]);
+    }, [id, fromIso, toIso]);
+
+    // Poll every 2 seconds for new rows and merge them into the table (latest first).
+    // Pause polling while the edit modal is open to keep typing/snappiness smooth.
+    // Also pause while a time-range filter is active.
+    useEffect(() => {
+        if (!id) return;
+
+        const ref = pollingRef.current;
+
+        // If the edit modal is open or a range filter is active, stop polling completely.
+        if (editSensorModal.isOpen || isRangeActive) {
+            ref.stop = true;
+            ref.inFlight = false;
+            if (ref.timer) clearTimeout(ref.timer);
+            ref.timer = null;
+            return;
+        }
+
+        // Stop any previous timer when the id changes.
+        ref.stop = false;
+        ref.inFlight = false;
+        if (ref.timer) clearTimeout(ref.timer);
+        ref.timer = null;
+
+        const pollDelayMs = 2000;
+        const limit = 2;
+
+        const tick = async () => {
+            if (ref.stop) return;
+
+            // Don't overlap requests.
+            if (ref.inFlight) {
+                ref.timer = setTimeout(tick, pollDelayMs);
+                return;
+            }
+
+            ref.inFlight = true;
+            try {
+                const res = await getSensorData(id, limit);
+                const incoming = Array.isArray(res?.items) ? res.items : [];
+                if (incoming.length > 0) {
+                    setData((cur) => {
+                        const currentItems = Array.isArray(cur?.items) ? (cur.items as any[]) : [];
+                        const merged = new Map<string, any>();
+
+                        // Keep existing items first (so we don't reorder unless needed)
+                        for (const r of currentItems) merged.set(rowKey(r), r);
+                        // Append/merge incoming (usually newest rows)
+                        for (const r of incoming) merged.set(rowKey(r), r);
+
+                        const mergedArr = Array.from(merged.values());
+                        newestFirstSort(mergedArr);
+
+                        // Cap to avoid unbounded growth.
+                        const capped = mergedArr.slice(0, 500);
+
+                        const nextCount = typeof res?.count === "number" ? res.count : cur?.count ?? 0;
+                        const nextSensor = res?.sensor ?? cur?.sensor ?? id;
+                        return { sensor: nextSensor, count: nextCount, items: capped as any };
+                    });
+                } else if (typeof res?.count === "number") {
+                    // keep count in sync even if no new items
+                    setData((cur) => ({ ...cur, count: res.count }));
+                }
+            } catch {
+                // Polling errors should be silent; the next tick will retry.
+            } finally {
+                ref.inFlight = false;
+                if (!ref.stop) ref.timer = setTimeout(tick, pollDelayMs);
+            }
+        };
+
+        // Start after a small delay; initial page load already fetches.
+        ref.timer = setTimeout(tick, pollDelayMs);
+
+        return () => {
+            ref.stop = true;
+            ref.inFlight = false;
+            if (ref.timer) clearTimeout(ref.timer);
+            ref.timer = null;
+        };
+    }, [id, editSensorModal.isOpen, isRangeActive]);
 
     // Load persisted selection when sensor id changes.
     useEffect(() => {
@@ -192,6 +388,13 @@ export default function SensorPage() {
         } catch {
             // ignore
         }
+    }, [id]);
+
+    useEffect(() => {
+        if (!id) return;
+        setRangeTouched(false);
+        setDraftRange({ from: null, to: null });
+        setAppliedRange({ from: null, to: null });
     }, [id]);
 
     const normalizedRows = useMemo(() => {
@@ -289,7 +492,7 @@ export default function SensorPage() {
         seriesWithCounts.sort((a, b) => b.nonNull - a.nonNull);
 
         const maxSeriesDefault = 8;
-        const defaultFields = seriesWithCounts.slice(0, maxSeriesDefault).map((s) => s.series.name);
+        const defaultFields = seriesWithCounts.slice(0, Math.min(2, maxSeriesDefault)).map((s) => s.series.name);
 
         return {
             timeKey,
@@ -315,17 +518,6 @@ export default function SensorPage() {
             return chart.defaultFields;
         });
     }, [chart, selectionTouched]);
-
-    // Persist selection.
-    useEffect(() => {
-        if (!id) return;
-        if (!selectionTouched) return;
-        try {
-            window.localStorage.setItem(`sensorChartFields:${id}`, JSON.stringify(selectedFields));
-        } catch {
-            // ignore
-        }
-    }, [id, selectedFields, selectionTouched]);
 
     const visibleSeries = useMemo(() => {
         if (!chart) return [] as SensorFieldsLineChartSeries[];
@@ -388,14 +580,143 @@ export default function SensorPage() {
                         <Button
                             variant="outline"
                             size="sm"
+                            onClick={openEditSensorModal}
+                            disabled={isDeleting || isSaving}
+                        >
+                            <PencilIcon/>
+                        </Button>
+                        <Button
+                            variant="outline"
+                            size="sm"
                             className="ring-orange-600 bg-orange-100"
                             onClick={onDelete}
-                            disabled={isDeleting}
+                            disabled={isDeleting || isSaving}
                         >
                             <TrashBinIcon/>
                         </Button>
                     </div>
                 </div>
+
+                <Modal
+                    isOpen={editSensorModal.isOpen}
+                    onClose={closeEditSensorModal}
+                    className="max-w-[700px] p-6 lg:p-10"
+                >
+                    <form onSubmit={onEditSensorSubmit} className="space-y-6">
+                        <div>
+                            <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
+                                Edit sensor
+                            </h4>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                                Update this sensor’s display name.
+                            </p>
+                        </div>
+
+                        <div>
+                            <Label>Sensor name</Label>
+                            <Input
+                                defaultValue={sensorName}
+                                onChange={(e) => setSensorName(e.target.value)}
+                                placeholder="Enter sensor name"
+                            />
+                        </div>
+
+                        {saveError ? (
+                            <div className="text-sm text-red-600 dark:text-red-400">{saveError}</div>
+                        ) : null}
+
+                        <div className="flex items-center justify-end gap-3">
+                            <Button variant="outline" type="button" onClick={closeEditSensorModal}>
+                                Cancel
+                            </Button>
+                            <Button type="submit" disabled={isSaving}>
+                                {isSaving ? "Saving…" : "Save"}
+                            </Button>
+                        </div>
+                    </form>
+                </Modal>
+
+                <ComponentCard
+                    title="Time range"
+                    desc={
+                        isRangeActive
+                            ? `Filtering ${fromIso ? "from" : ""}${fromIso && toIso ? " → " : ""}${toIso ? "to" : ""} (ISO 8601)`
+                            : "Showing latest values (live)"
+                    }
+                >
+                    <div className="space-y-3">
+                        <DateTimeRangePicker
+                            id={`sensor-range-${id}`}
+                            label="From / To"
+                            placeholder="Select a date & time range"
+                            value={draftRange}
+                            disabled={loading || isRangeLoading}
+                            onChangeAction={(next) => {
+                                setRangeTouched(true);
+                                setDraftRange(next);
+                            }}
+                        />
+
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={(!isRangeActive && !draftRange.from && !draftRange.to) || loading || isRangeLoading}
+                                onClick={() => {
+                                    setRangeTouched(true);
+                                    setDraftRange({ from: null, to: null });
+                                    setAppliedRange({ from: null, to: null });
+                                }}
+                            >
+                                Clear
+                            </Button>
+
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                disabled={loading || isRangeLoading || (!draftRange.from && !draftRange.to)}
+                                onClick={async () => {
+                                    if (!id) return;
+
+                                    // Commit draft -> applied first so future effects/polling use it.
+                                    setAppliedRange(draftRange);
+
+                                    const nextFromIso = draftRange.from ? draftRange.from.toISOString() : null;
+                                    const nextToIso = draftRange.to ? draftRange.to.toISOString() : null;
+
+                                    setIsRangeLoading(true);
+                                    try {
+                                        const res = await getSensorData(id, 100, nextFromIso, nextToIso);
+                                        setData({
+                                            sensor: res?.sensor ?? id,
+                                            count: typeof res?.count === "number" ? res.count : 0,
+                                            items: Array.isArray(res?.items) ? res.items : [],
+                                        });
+                                    } catch (e) {
+                                        const msg = e instanceof Error ? e.message : "Failed to load sensor data.";
+                                        notify({ variant: "error", title: "Load failed", message: msg });
+                                    } finally {
+                                        setIsRangeLoading(false);
+                                    }
+                                }}
+                            >
+                                {isRangeLoading ? "Applying…" : "Apply"}
+                            </Button>
+
+                            {isDraftDifferentFromApplied ? (
+                                <div className="text-xs text-orange-700 dark:text-orange-300">
+                                    Range changed — click Apply to refresh.
+                                </div>
+                            ) : null}
+                        </div>
+
+                        {isRangeActive ? (
+                            <div className="text-xs text-gray-500 dark:text-gray-400">
+                                Live polling is paused while a time range is applied.
+                            </div>
+                        ) : null}
+                    </div>
+                </ComponentCard>
 
                 <ComponentCard
                     title="Sensor trends"
@@ -546,7 +867,7 @@ export default function SensorPage() {
                                         </TableRow>
                                     ) : (
                                         normalizedRows.map((row: any, idx: number) => (
-                                            <TableRow key={row?.id ?? row?.timestamp ?? row?.created_at ?? idx}>
+                                            <TableRow key={rowKey(row) || row?.timestamp || row?.created_at || idx}>
                                                 {columns.map((col) => (
                                                     <TableCell
                                                         key={col}

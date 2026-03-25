@@ -396,7 +396,7 @@ export default function BranchPage() {
             <div className="mx-auto w-full max-w-4xl">
                 <div className="flex flex-row justify-between">
                     <div className="mb-6">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1">
                             <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">
                                 {branch.name}
                             </h1>
@@ -414,7 +414,7 @@ export default function BranchPage() {
                                 variant="outline"
                                 size="sm"
                                 onClick={openEditBranchModal}
-                                className="h-8 w-8 px-0 py-0 bg-none bg-transparent ring-0 ring-transparent shadow-none hover:ring-0"
+                                className="h-8 w-8 px-0 py-0 bg-none !bg-transparent ring-0 ring-transparent shadow-none hover:ring-0"
                                 startIcon={<PencilIcon/>}
                             >
                                 <span className="sr-only">Edit</span>

@@ -62,8 +62,6 @@ const AppSidebar: React.FC = () => {
     const pathname = usePathname();
     const router = useRouter();
 
-    const [lastBranchId, setLastBranchId] = useState<string | null>(null);
-
     const createBranchModal = useModal(false);
     const [branchName, setBranchName] = useState("");
     const [isCreatingBranch, setIsCreatingBranch] = useState(false);
@@ -98,32 +96,6 @@ const AppSidebar: React.FC = () => {
                 setCurrentUser(null);
             });
     }, []);
-
-    useEffect(() => {
-        // Restore previous branch selection (session scoped) so we can keep it highlighted
-        // on routes that don't include the branch id (e.g. sensor detail pages).
-        try {
-            const stored = sessionStorage.getItem(LAST_BRANCH_STORAGE_KEY);
-            if (stored) setLastBranchId(stored);
-        } catch {
-            // ignore (SSR/blocked storage)
-        }
-    }, []);
-
-    useEffect(() => {
-        // If we navigate to a branch route, remember it as the current selection.
-        if (!pathname) return;
-        const m = pathname.match(/^\/branches\/([^/]+)(?:\/|$)/);
-        if (!m) return;
-
-        const branchId = m[1];
-        setLastBranchId(branchId);
-        try {
-            sessionStorage.setItem(LAST_BRANCH_STORAGE_KEY, branchId);
-        } catch {
-            // ignore
-        }
-    }, [pathname]);
 
     const closeCreateBranchModal = useCallback(() => {
         createBranchModal.closeModal();
@@ -313,7 +285,13 @@ const AppSidebar: React.FC = () => {
         (path: string) => {
             // Treat nested routes as active, so /branches/123/... keeps the branch highlighted.
             if (path === "/") return pathname === "/";
-            return pathname === path || pathname.startsWith(`${path}/`);
+            const routeActive = pathname === path || pathname.startsWith(`${path}/`);
+            if (routeActive) return true;
+
+            // On routes that don't include the branch id (e.g. /sensors/[id]),
+            // fetch the branch id from the sensor's data and keep the corresponding branch highlighted in the sidebar.
+
+            return false;
         },
         [pathname],
     );
@@ -349,8 +327,6 @@ const AppSidebar: React.FC = () => {
     }, [openCreateBranchModal, navItems, staticNavItems]);
 
     const keepBranchSelectionSubmenu: { type: "main" | "others"; index: number } | null = useMemo(() => {
-        if (!lastBranchId) return null;
-
         let bestMatch: { type: "main" | "others"; index: number } | null = null;
         let bestScore = -1;
         menuItems.forEach((nav, index) => {
@@ -358,7 +334,6 @@ const AppSidebar: React.FC = () => {
                 if (!subItem.path) return;
                 const m = subItem.path.match(/^\/branches\/([^/]+)(?:\/|$)/);
                 if (!m) return;
-                if (m[1] !== lastBranchId) return;
 
                 const score = subItem.path.length;
                 if (score > bestScore) {
@@ -369,7 +344,7 @@ const AppSidebar: React.FC = () => {
         });
 
         return bestMatch;
-    }, [lastBranchId, menuItems]);
+    }, [menuItems]);
 
     const routeOpenSubmenu: { type: "main" | "others"; index: number } | null = useMemo(() => {
         let bestMatch: { type: "main" | "others"; index: number } | null = null;
