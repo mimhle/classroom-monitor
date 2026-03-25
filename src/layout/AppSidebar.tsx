@@ -53,12 +53,16 @@ const navItemStatic: NavItem[] = [
     },
 ];
 
+const LAST_BRANCH_STORAGE_KEY = "classroom-monitor:last-branch-id";
+
 const AppSidebar: React.FC = () => {
     const [navItems, setNavItems] = useState<Branch[]>([]);
     const [currentUser, setCurrentUser] = useState<CurrentUser>(null);
     const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
     const pathname = usePathname();
     const router = useRouter();
+
+    const [lastBranchId, setLastBranchId] = useState<string | null>(null);
 
     const createBranchModal = useModal(false);
     const [branchName, setBranchName] = useState("");
@@ -94,6 +98,32 @@ const AppSidebar: React.FC = () => {
                 setCurrentUser(null);
             });
     }, []);
+
+    useEffect(() => {
+        // Restore previous branch selection (session scoped) so we can keep it highlighted
+        // on routes that don't include the branch id (e.g. sensor detail pages).
+        try {
+            const stored = sessionStorage.getItem(LAST_BRANCH_STORAGE_KEY);
+            if (stored) setLastBranchId(stored);
+        } catch {
+            // ignore (SSR/blocked storage)
+        }
+    }, []);
+
+    useEffect(() => {
+        // If we navigate to a branch route, remember it as the current selection.
+        if (!pathname) return;
+        const m = pathname.match(/^\/branches\/([^/]+)(?:\/|$)/);
+        if (!m) return;
+
+        const branchId = m[1];
+        setLastBranchId(branchId);
+        try {
+            sessionStorage.setItem(LAST_BRANCH_STORAGE_KEY, branchId);
+        } catch {
+            // ignore
+        }
+    }, [pathname]);
 
     const closeCreateBranchModal = useCallback(() => {
         createBranchModal.closeModal();
@@ -279,7 +309,14 @@ const AppSidebar: React.FC = () => {
         index: number;
     } | null>(null);
 
-    const isActive = useCallback((path: string) => path === pathname, [pathname]);
+    const isActive = useCallback(
+        (path: string) => {
+            // Treat nested routes as active, so /branches/123/... keeps the branch highlighted.
+            if (path === "/") return pathname === "/";
+            return pathname === path || pathname.startsWith(`${path}/`);
+        },
+        [pathname],
+    );
 
     const staticNavItems = useMemo((): NavItem[] => {
         const role = (currentUser as any)?.role;
@@ -311,6 +348,29 @@ const AppSidebar: React.FC = () => {
         ];
     }, [openCreateBranchModal, navItems, staticNavItems]);
 
+    const keepBranchSelectionSubmenu: { type: "main" | "others"; index: number } | null = useMemo(() => {
+        if (!lastBranchId) return null;
+
+        let bestMatch: { type: "main" | "others"; index: number } | null = null;
+        let bestScore = -1;
+        menuItems.forEach((nav, index) => {
+            nav.subItems?.forEach((subItem) => {
+                if (!subItem.path) return;
+                const m = subItem.path.match(/^\/branches\/([^/]+)(?:\/|$)/);
+                if (!m) return;
+                if (m[1] !== lastBranchId) return;
+
+                const score = subItem.path.length;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestMatch = { type: "main", index };
+                }
+            });
+        });
+
+        return bestMatch;
+    }, [lastBranchId, menuItems]);
+
     const routeOpenSubmenu: { type: "main" | "others"; index: number } | null = useMemo(() => {
         let bestMatch: { type: "main" | "others"; index: number } | null = null;
         let bestScore = -1;
@@ -331,7 +391,7 @@ const AppSidebar: React.FC = () => {
         return bestMatch;
     }, [isActive, menuItems]);
 
-    const effectiveOpenSubmenu = openSubmenu ?? routeOpenSubmenu;
+    const effectiveOpenSubmenu = openSubmenu ?? routeOpenSubmenu ?? keepBranchSelectionSubmenu;
 
     const handleSubmenuToggle = (index: number, menuType: "main" | "others") => {
         setOpenSubmenu((prevOpenSubmenu) => {

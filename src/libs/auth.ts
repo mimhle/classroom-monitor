@@ -4,9 +4,10 @@ import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export type CurrentUser = {
-    id?: string;
-    username?: string;
-    role?: string;
+    user_id: string;
+    group_id: string;
+    username: string;
+    role: string;
     [key: string]: any;
 } | null;
 
