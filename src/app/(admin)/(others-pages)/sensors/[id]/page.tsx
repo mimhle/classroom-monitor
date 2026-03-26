@@ -140,8 +140,15 @@ export default function SensorPage() {
     // (what the API actually uses) to avoid data reloading while the user is still selecting time.
     const [draftRange, setDraftRange] = useState<DateTimeRange>({ from: null, to: null });
     const [appliedRange, setAppliedRange] = useState<DateTimeRange>({ from: null, to: null });
-    const [rangeTouched, setRangeTouched] = useState(false);
     const [isRangeLoading, setIsRangeLoading] = useState(false);
+
+    // Range result limit selector (per sensor). null => "All".
+    const [rangeLimit, setRangeLimit] = useState<number | null>(100);
+
+    const rangeLimitLabel = useMemo(() => {
+        if (rangeLimit === null) return "All";
+        return String(rangeLimit);
+    }, [rangeLimit]);
 
     const fromIso = useMemo(
         () => (appliedRange.from ? appliedRange.from.toISOString() : null),
@@ -192,8 +199,6 @@ export default function SensorPage() {
             return;
         }
 
-        // updateSensor() requires branch_id.
-        // We expect it to come from getSensor(). If it's missing, it's a backend/data issue.
         const branch_id = sensor.branch_id;
 
         setIsSaving(true);
@@ -261,7 +266,7 @@ export default function SensorPage() {
             setError(null);
             try {
                 const s = await getSensor(id);
-                const res = await getSensorData(id, 100, fromIso, toIso);
+                const res = await getSensorData(id, rangeLimit ?? undefined, fromIso, toIso);
 
                 if (cancelled) return;
 
@@ -288,7 +293,7 @@ export default function SensorPage() {
         return () => {
             cancelled = true;
         };
-    }, [id, fromIso, toIso]);
+    }, [id, rangeLimit, fromIso, toIso]);
 
     // Poll every 2 seconds for new rows and merge them into the table (latest first).
     // Pause polling while the edit modal is open to keep typing/snappiness smooth.
@@ -343,10 +348,11 @@ export default function SensorPage() {
                         newestFirstSort(mergedArr);
 
                         // Cap to avoid unbounded growth.
-                        const capped = mergedArr.slice(0, 500);
+                        const capped = mergedArr.slice(0, rangeLimit || 0);
 
                         const nextCount = typeof res?.count === "number" ? res.count : cur?.count ?? 0;
                         const nextSensor = res?.sensor ?? cur?.sensor ?? id;
+
                         return { sensor: nextSensor, count: nextCount, items: capped as any };
                     });
                 } else if (typeof res?.count === "number") {
@@ -370,32 +376,7 @@ export default function SensorPage() {
             if (ref.timer) clearTimeout(ref.timer);
             ref.timer = null;
         };
-    }, [id, editSensorModal.isOpen, isRangeActive]);
-
-    // Load persisted selection when sensor id changes.
-    useEffect(() => {
-        if (!id) return;
-        setSelectionTouched(false);
-        setSelectedFields([]);
-
-        try {
-            const raw = window.localStorage.getItem(`sensorChartFields:${id}`);
-            if (!raw) return;
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
-                setSelectedFields(parsed);
-            }
-        } catch {
-            // ignore
-        }
-    }, [id]);
-
-    useEffect(() => {
-        if (!id) return;
-        setRangeTouched(false);
-        setDraftRange({ from: null, to: null });
-        setAppliedRange({ from: null, to: null });
-    }, [id]);
+    }, [id, editSensorModal.isOpen, isRangeActive, rangeLimit]);
 
     const normalizedRows = useMemo(() => {
         return (data.items ?? []).map((row) => {
@@ -640,30 +621,53 @@ export default function SensorPage() {
                     title="Time range"
                     desc={
                         isRangeActive
-                            ? `Filtering ${fromIso ? "from" : ""}${fromIso && toIso ? " → " : ""}${toIso ? "to" : ""} (ISO 8601)`
-                            : "Showing latest values (live)"
+                            ? `Filtering ${fromIso ? "from" : ""}${fromIso && toIso ? " → " : ""}${toIso ? "to" : ""} • Rows: ${rangeLimitLabel}`
+                            : `Showing latest values (live) • Rows: ${rangeLimitLabel}`
                     }
                 >
-                    <div className="space-y-3">
-                        <DateTimeRangePicker
-                            id={`sensor-range-${id}`}
-                            label="From / To"
-                            placeholder="Select a date & time range"
-                            value={draftRange}
-                            disabled={loading || isRangeLoading}
-                            onChangeAction={(next) => {
-                                setRangeTouched(true);
-                                setDraftRange(next);
-                            }}
-                        />
+                    {/* Compact layout: picker + actions on one row (wraps on small screens). */}
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                        <div className="min-w-0 flex-1">
+                            <DateTimeRangePicker
+                                id={`sensor-range-${id}`}
+                                label="From / To"
+                                placeholder="Select a date & time range"
+                                value={draftRange}
+                                disabled={loading || isRangeLoading}
+                                onChangeAction={(next) => {
+                                    setDraftRange(next);
+                                }}
+                            />
+                        </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                            <label className="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                                <span className="whitespace-nowrap">Rows</span>
+                                <select
+                                    className="h-9 rounded-md border border-gray-200 bg-white px-2 text-sm text-gray-700 shadow-theme-xs outline-none dark:border-gray-800 dark:bg-gray-900 dark:text-gray-200"
+                                    value={rangeLimit === null ? "all" : String(rangeLimit)}
+                                    disabled={loading || isRangeLoading}
+                                    onChange={(e) => {
+                                        const v = e.target.value;
+                                        setRangeLimit(v === "all" ? null : Number(v));
+                                    }}
+                                >
+                                    <option value="100">100</option>
+                                    <option value="300">300</option>
+                                    <option value="500">500</option>
+                                    <option value="all">All</option>
+                                </select>
+                            </label>
+
                             <Button
                                 variant="outline"
                                 size="sm"
-                                disabled={(!isRangeActive && !draftRange.from && !draftRange.to) || loading || isRangeLoading}
+                                disabled={
+                                    (!isRangeActive && !draftRange.from && !draftRange.to) ||
+                                    loading ||
+                                    isRangeLoading
+                                }
                                 onClick={() => {
-                                    setRangeTouched(true);
                                     setDraftRange({ from: null, to: null });
                                     setAppliedRange({ from: null, to: null });
                                 }}
@@ -686,7 +690,7 @@ export default function SensorPage() {
 
                                     setIsRangeLoading(true);
                                     try {
-                                        const res = await getSensorData(id, 100, nextFromIso, nextToIso);
+                                        const res = await getSensorData(id, rangeLimit ?? undefined, nextFromIso, nextToIso);
                                         setData({
                                             sensor: res?.sensor ?? id,
                                             count: typeof res?.count === "number" ? res.count : 0,
@@ -702,18 +706,19 @@ export default function SensorPage() {
                             >
                                 {isRangeLoading ? "Applying…" : "Apply"}
                             </Button>
-
-                            {isDraftDifferentFromApplied ? (
-                                <div className="text-xs text-orange-700 dark:text-orange-300">
-                                    Range changed — click Apply to refresh.
-                                </div>
-                            ) : null}
                         </div>
+                    </div>
+
+                    <div className="mt-2 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                        {isDraftDifferentFromApplied ? (
+                            <div className="text-xs text-orange-700 dark:text-orange-300">Changed — click Apply.</div>
+                        ) : (
+                            <div/>
+                        )}
 
                         {isRangeActive ? (
-                            <div className="text-xs text-gray-500 dark:text-gray-400">
-                                Live polling is paused while a time range is applied.
-                            </div>
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Live polling paused while
+                                filtering.</div>
                         ) : null}
                     </div>
                 </ComponentCard>
