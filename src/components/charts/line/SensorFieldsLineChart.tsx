@@ -104,8 +104,8 @@ export default function SensorFieldsLineChart({
     }));
 
     return (
-        <div className="overflow-x-auto custom-scrollbar">
-            <div className="">
+        <div className="overflow-hidden custom-scrollbar h-fit">
+            <div className="h-fit">
                 <ReactApexChart options={options} series={chartSeries} type="line" height={height}/>
             </div>
         </div>

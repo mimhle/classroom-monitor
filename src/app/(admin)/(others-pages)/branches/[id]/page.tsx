@@ -551,7 +551,7 @@ export default function BranchPage() {
                                     variant="outline"
                                     size="sm"
                                     onClick={openEditBranchModal}
-                                    className="h-8 w-8 px-0 py-0 bg-none !bg-transparent ring-0 ring-transparent shadow-none hover:ring-0"
+                                    className="h-8 w-8 px-0 py-0 bg-none !bg-transparent !ring-0 !ring-transparent shadow-none hover:ring-0"
                                     startIcon={<PencilIcon/>}
                                 >
                                     <span className="sr-only">Edit</span>

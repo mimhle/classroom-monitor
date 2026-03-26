@@ -129,6 +129,7 @@ export type CreateUserInput = {
     username: string;
     password?: string;
     role?: "User" | "Admin";
+    group_id?: string;
 };
 
 export async function createUser(input: CreateUserInput) {

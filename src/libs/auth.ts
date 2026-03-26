@@ -15,7 +15,7 @@ export type CurrentUser = {
 export async function getHostUrl() {
     const headersList = await headers();
     const host = headersList.get("host");
-    const protocol = host?.startsWith("localhost") ? "http" : "https";
+    const protocol = "http";
     return `${protocol}://${host}`;
 }
 
