@@ -19,6 +19,8 @@ import { useModal } from "@/hooks/useModal";
 import Label from "@/components/form/Label";
 import Input from "@/components/form/input/InputField";
 import DateTimeRangePicker, { type DateTimeRange } from "@/components/form/DateTimeRangePicker";
+import { getCurrentUser } from "@/libs/auth";
+import { isAdminOrSuperadmin } from "@/libs/roles";
 
 function formatCellValue(v: unknown) {
     if (v === null || v === undefined) return "";
@@ -168,7 +170,27 @@ export default function SensorPage() {
         return dFrom !== aFrom || dTo !== aTo;
     }, [draftRange.from, draftRange.to, appliedRange.from, appliedRange.to]);
 
+    // User role check
+    const [canEdit, setCanEdit] = useState(false);
+
+    useEffect(() => {
+        let cancelled = false;
+        getCurrentUser()
+            .then((u) => {
+                if (cancelled) return;
+                setCanEdit(isAdminOrSuperadmin(u));
+            })
+            .catch(() => {
+                if (cancelled) return;
+                setCanEdit(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
     function openEditSensorModal() {
+        if (!canEdit) return;
         setSaveError(null);
         setSensorName(sensor?.name ?? "");
         editSensorModal.openModal();
@@ -182,6 +204,7 @@ export default function SensorPage() {
 
     async function onEditSensorSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (!canEdit) return;
 
         if (!id || !sensor) {
             setSaveError("Missing sensor id.");
@@ -221,6 +244,8 @@ export default function SensorPage() {
     }
 
     async function onDelete() {
+        if (!canEdit) return;
+
         if (!id || !sensor) {
             notify({
                 variant: "error",
@@ -418,7 +443,7 @@ export default function SensorPage() {
         // If we unpacked at least one JSON object, the raw "value" column isn't useful.
         if (anyUnpacked) keys.delete("value");
 
-        const preferredOrder = ["timestamp", "time", "created_at", "updated_at", "vbat", "temp", "humidity"];
+        const preferredOrder = ["timestamp", "time", "created_at", "updated_at", "temp", "humidity"];
         const ordered: string[] = [];
         for (const k of preferredOrder) {
             if (keys.has(k)) ordered.push(k);
@@ -558,64 +583,70 @@ export default function SensorPage() {
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={openEditSensorModal}
-                            disabled={isDeleting || isSaving}
-                        >
-                            <PencilIcon/>
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="ring-orange-600 bg-orange-100"
-                            onClick={onDelete}
-                            disabled={isDeleting || isSaving}
-                        >
-                            <TrashBinIcon/>
-                        </Button>
+                        {canEdit ? (
+                            <>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={openEditSensorModal}
+                                    disabled={isDeleting || isSaving}
+                                >
+                                    <PencilIcon/>
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="ring-orange-600 bg-orange-100"
+                                    onClick={onDelete}
+                                    disabled={isDeleting || isSaving}
+                                >
+                                    <TrashBinIcon/>
+                                </Button>
+                            </>
+                        ) : null}
                     </div>
                 </div>
 
-                <Modal
-                    isOpen={editSensorModal.isOpen}
-                    onClose={closeEditSensorModal}
-                    className="max-w-[700px] p-6 lg:p-10"
-                >
-                    <form onSubmit={onEditSensorSubmit} className="space-y-6">
-                        <div>
-                            <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
-                                Edit sensor
-                            </h4>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">
-                                Update this sensor’s display name.
-                            </p>
-                        </div>
+                {canEdit ? (
+                    <Modal
+                        isOpen={editSensorModal.isOpen}
+                        onClose={closeEditSensorModal}
+                        className="max-w-[700px] p-6 lg:p-10"
+                    >
+                        <form onSubmit={onEditSensorSubmit} className="space-y-6">
+                            <div>
+                                <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
+                                    Edit sensor
+                                </h4>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                    Update this sensor’s display name.
+                                </p>
+                            </div>
 
-                        <div>
-                            <Label>Sensor name</Label>
-                            <Input
-                                defaultValue={sensorName}
-                                onChange={(e) => setSensorName(e.target.value)}
-                                placeholder="Enter sensor name"
-                            />
-                        </div>
+                            <div>
+                                <Label>Sensor name</Label>
+                                <Input
+                                    defaultValue={sensorName}
+                                    onChange={(e) => setSensorName(e.target.value)}
+                                    placeholder="Enter sensor name"
+                                />
+                            </div>
 
-                        {saveError ? (
-                            <div className="text-sm text-red-600 dark:text-red-400">{saveError}</div>
-                        ) : null}
+                            {saveError ? (
+                                <div className="text-sm text-red-600 dark:text-red-400">{saveError}</div>
+                            ) : null}
 
-                        <div className="flex items-center justify-end gap-3">
-                            <Button variant="outline" type="button" onClick={closeEditSensorModal}>
-                                Cancel
-                            </Button>
-                            <Button type="submit" disabled={isSaving}>
-                                {isSaving ? "Saving…" : "Save"}
-                            </Button>
-                        </div>
-                    </form>
-                </Modal>
+                            <div className="flex items-center justify-end gap-3">
+                                <Button variant="outline" type="button" onClick={closeEditSensorModal}>
+                                    Cancel
+                                </Button>
+                                <Button type="submit" disabled={isSaving}>
+                                    {isSaving ? "Saving…" : "Save"}
+                                </Button>
+                            </div>
+                        </form>
+                    </Modal>
+                ) : null}
 
                 <ComponentCard
                     title="Time range"

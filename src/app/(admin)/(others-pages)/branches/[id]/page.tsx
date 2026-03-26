@@ -2,7 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { createSensor, deleteBranch, getBranch, getBranchSensors, Sensor, updateBranch, } from "@/libs/actions";
+import {
+    createCamera,
+    createSensor,
+    deleteBranch,
+    getBranch,
+    getBranchCameras,
+    getBranchSensors,
+    Sensor,
+    updateBranch,
+} from "@/libs/actions";
 import Button from "@/components/ui/button/Button";
 import { PencilIcon, TrashBinIcon } from "@/icons";
 import { useNotification } from "@/components/ui/notification";
@@ -12,6 +21,7 @@ import { useModal } from "@/hooks/useModal";
 import Label from "@/components/form/Label";
 import Input from "@/components/form/input/InputField";
 import { getCurrentUser } from "@/libs/auth";
+import { isAdminOrSuperadmin } from "@/libs/roles";
 import Badge from "@/components/ui/badge/Badge";
 
 type Branch = {
@@ -129,6 +139,23 @@ export default function BranchPage() {
     const [sensorsLoading, setSensorsLoading] = useState(false);
     const [sensorsError, setSensorsError] = useState<string | null>(null);
 
+    const [cameras, setCameras] = useState<
+        {
+            camera_id: string;
+            branch_id: string;
+            name: string;
+            updated_at: string;
+        }[]
+    >([]);
+    const [camerasLoading, setCamerasLoading] = useState(false);
+    const [camerasError, setCamerasError] = useState<string | null>(null);
+
+    // Add camera modal/state (mirrors create sensor)
+    const createCameraModal = useModal(false);
+    const [cameraName, setCameraName] = useState("");
+    const [isCreatingCamera, setIsCreatingCamera] = useState(false);
+    const [createCameraError, setCreateCameraError] = useState<string | null>(null);
+
     const createSensorModal = useModal(false);
     const [sensorName, setSensorName] = useState("");
     const [isCreatingSensor, setIsCreatingSensor] = useState(false);
@@ -141,16 +168,21 @@ export default function BranchPage() {
 
     const [editUserGroupId, setEditUserGroupId] = useState<string | null>(null);
 
+    const [canEdit, setCanEdit] = useState(false);
+
     useEffect(() => {
         let cancelled = false;
         getCurrentUser()
             .then((user) => {
                 if (cancelled) return;
+                setCanEdit(isAdminOrSuperadmin(user));
+
                 const gid = (user as any)?.group_id as string | undefined;
                 setEditUserGroupId(gid ?? null);
             })
             .catch(() => {
                 if (cancelled) return;
+                setCanEdit(false);
                 setEditUserGroupId(null);
             });
 
@@ -217,6 +249,35 @@ export default function BranchPage() {
         };
     }, [id]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        async function run() {
+            if (!id) return;
+
+            setCamerasLoading(true);
+            setCamerasError(null);
+            try {
+                const data = await getBranchCameras(id);
+                if (cancelled) return;
+                setCameras(Array.isArray(data?.items) ? data.items : []);
+            } catch (e) {
+                if (cancelled) return;
+                const msg = e instanceof Error ? e.message : "Failed to load cameras.";
+                setCamerasError(msg);
+                setCameras([]);
+            } finally {
+                if (!cancelled) setCamerasLoading(false);
+            }
+        }
+
+        run();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
     async function refreshSensors() {
         if (!id) return;
         setSensorsLoading(true);
@@ -233,7 +294,24 @@ export default function BranchPage() {
         }
     }
 
+    async function refreshCameras() {
+        if (!id) return;
+        setCamerasLoading(true);
+        setCamerasError(null);
+        try {
+            const data = await getBranchCameras(id);
+            setCameras(Array.isArray(data?.items) ? data.items : []);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to load cameras.";
+            setCamerasError(msg);
+            setCameras([]);
+        } finally {
+            setCamerasLoading(false);
+        }
+    }
+
     function openCreateSensorModal() {
+        if (!canEdit) return;
         setSensorName("");
         setCreateSensorError(null);
         createSensorModal.openModal();
@@ -245,7 +323,21 @@ export default function BranchPage() {
         setCreateSensorError(null);
     }
 
+    function openCreateCameraModal() {
+        if (!canEdit) return;
+        setCameraName("");
+        setCreateCameraError(null);
+        createCameraModal.openModal();
+    }
+
+    function closeCreateCameraModal() {
+        createCameraModal.closeModal();
+        setCameraName("");
+        setCreateCameraError(null);
+    }
+
     function openEditBranchModal() {
+        if (!canEdit) return;
         setRenameError(null);
         setBranchName(branch?.name ?? "");
         editBranchModal.openModal();
@@ -259,6 +351,7 @@ export default function BranchPage() {
 
     async function onRenameBranchSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (!canEdit) return;
 
         if (!id || !branch) {
             setRenameError("Missing branch id.");
@@ -306,6 +399,8 @@ export default function BranchPage() {
 
     async function onCreateSensorSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (!canEdit) return;
+
         const name = sensorName.trim();
         if (!id) {
             setCreateSensorError("Missing branch id.");
@@ -341,7 +436,48 @@ export default function BranchPage() {
         }
     }
 
+    async function onCreateCameraSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        if (!canEdit) return;
+
+        const name = cameraName.trim();
+        if (!id) {
+            setCreateCameraError("Missing branch id.");
+            return;
+        }
+        if (!name) {
+            setCreateCameraError("Camera name is required.");
+            return;
+        }
+
+        setIsCreatingCamera(true);
+        setCreateCameraError(null);
+        try {
+            const created = (await createCamera({ name, branch_id: id })) as any;
+            await refreshCameras();
+            closeCreateCameraModal();
+
+            notify({
+                variant: "success",
+                title: "Camera created",
+                message: `“${name}” was created successfully.`,
+            });
+
+            const createdCameraId: string | undefined = created?.camera_id;
+            if (createdCameraId) {
+                router.push(`/cameras/${encodeURIComponent(createdCameraId)}`);
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to create camera.";
+            setCreateCameraError(message);
+        } finally {
+            setIsCreatingCamera(false);
+        }
+    }
+
     async function onDelete() {
+        if (!canEdit) return;
+
         if (!id || !branch) {
             notify({
                 variant: "error",
@@ -410,39 +546,110 @@ export default function BranchPage() {
                                     </span>
                                 );
                             })()}
-                            <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={openEditBranchModal}
-                                className="h-8 w-8 px-0 py-0 bg-none !bg-transparent ring-0 ring-transparent shadow-none hover:ring-0"
-                                startIcon={<PencilIcon/>}
-                            >
-                                <span className="sr-only">Edit</span>
-                            </Button>
+                            {canEdit ? (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={openEditBranchModal}
+                                    className="h-8 w-8 px-0 py-0 bg-none !bg-transparent ring-0 ring-transparent shadow-none hover:ring-0"
+                                    startIcon={<PencilIcon/>}
+                                >
+                                    <span className="sr-only">Edit</span>
+                                </Button>
+                            ) : null}
                         </div>
                         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                             Branch ID: <span className="font-mono">{branch.branch_id}</span>
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
-                        <Button size="sm" onClick={openCreateSensorModal}>
-                            Add sensor
-                        </Button>
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            className="ring-orange-600 bg-orange-100"
-                            onClick={onDelete}
-                            disabled={isDeleting}
-                        >
-                            <TrashBinIcon/>
-                        </Button>
+                        {canEdit ? (
+                            <>
+                                <Button size="sm" onClick={openCreateCameraModal}>
+                                    Add camera
+                                </Button>
+                                <Button size="sm" onClick={openCreateSensorModal}>
+                                    Add sensor
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="ring-orange-600 bg-orange-100"
+                                    onClick={onDelete}
+                                    disabled={isDeleting}
+                                >
+                                    <TrashBinIcon/>
+                                </Button>
+                            </>
+                        ) : null}
                     </div>
                 </div>
 
                 {/* Alerts badge moved to header for compact display */}
 
-                <div className="mt-6">
+                <div className="mt-6 space-y-6">
+                    <ComponentCard
+                        title="Cameras"
+                        desc={
+                            camerasLoading
+                                ? "Loading cameras…"
+                                : `${cameras.length} camera${cameras.length === 1 ? "" : "s"} in this branch.`
+                        }
+                    >
+                        {camerasError ? (
+                            <div
+                                className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                                {camerasError}
+                            </div>
+                        ) : null}
+
+                        {!camerasLoading && !camerasError && cameras.length === 0 ? (
+                            <div className="text-sm text-gray-500 dark:text-gray-400">
+                                No cameras attached to this branch.
+                            </div>
+                        ) : null}
+
+                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            {(camerasLoading ? Array.from({ length: 4 }) : cameras).map((camera, idx) => {
+                                if (camerasLoading) {
+                                    return (
+                                        <div
+                                            key={`camera-skeleton-${idx}`}
+                                            className="h-24 animate-pulse rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"
+                                        />
+                                    );
+                                }
+
+                                const c = camera as (typeof cameras)[number];
+
+                                return (
+                                    <button
+                                        key={c.camera_id}
+                                        type="button"
+                                        onClick={() => router.push(`/cameras/${encodeURIComponent(c.camera_id)}`)}
+                                        className="group w-full rounded-xl border border-gray-200 bg-white p-4 text-left shadow-theme-xs transition hover:border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/60"
+                                    >
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div
+                                                    className="truncate text-sm font-semibold text-gray-800 group-hover:text-gray-900 dark:text-white/90 dark:group-hover:text-white">
+                                                    {c.name || c.camera_id}
+                                                </div>
+                                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                                    Camera ID: <span className="font-mono">{c.camera_id}</span>
+                                                </div>
+                                            </div>
+                                            <div
+                                                className="text-xs text-gray-400 group-hover:text-gray-500 dark:text-gray-500 dark:group-hover:text-gray-400">
+                                                View
+                                            </div>
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                    </ComponentCard>
+
                     <ComponentCard
                         title="Sensors"
                         desc={
@@ -509,91 +716,138 @@ export default function BranchPage() {
                 </div>
             </div>
 
-            <Modal
-                isOpen={createSensorModal.isOpen}
-                onClose={closeCreateSensorModal}
-                className="max-w-[584px] p-5 lg:p-8"
-            >
-                <form onSubmit={onCreateSensorSubmit}>
-                    <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
-                        Create sensor
-                    </h4>
+            {canEdit ? (
+                <>
+                    <Modal
+                        isOpen={createCameraModal.isOpen}
+                        onClose={closeCreateCameraModal}
+                        className="max-w-[584px] p-5 lg:p-8"
+                    >
+                        <form onSubmit={onCreateCameraSubmit}>
+                            <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
+                                Create camera
+                            </h4>
 
-                    <div className="grid grid-cols-1 gap-y-3">
-                        <div>
-                            <Label htmlFor="sensor-name">Sensor name</Label>
-                            <Input
-                                id="sensor-name"
-                                name="name"
-                                type="text"
-                                placeholder="e.g. Room 101"
-                                defaultValue={sensorName}
-                                onChange={(e) => setSensorName(e.target.value)}
-                                error={Boolean(createSensorError)}
-                                hint={createSensorError ?? undefined}
-                                disabled={isCreatingSensor}
-                            />
-                        </div>
-                    </div>
+                            <div className="grid grid-cols-1 gap-y-3">
+                                <div>
+                                    <Label htmlFor="camera-name">Camera name</Label>
+                                    <Input
+                                        id="camera-name"
+                                        name="name"
+                                        type="text"
+                                        placeholder="e.g. Entrance"
+                                        defaultValue={cameraName}
+                                        onChange={(e) => setCameraName(e.target.value)}
+                                        error={Boolean(createCameraError)}
+                                        hint={createCameraError ?? undefined}
+                                        disabled={isCreatingCamera}
+                                    />
+                                </div>
+                            </div>
 
-                    <div className="mt-6 flex items-center justify-end gap-3">
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={closeCreateSensorModal}
-                            disabled={isCreatingSensor}
-                        >
-                            Cancel
-                        </Button>
-                        <Button size="sm" type="submit" disabled={isCreatingSensor}>
-                            {isCreatingSensor ? "Creating..." : "Create"}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                            <div className="mt-6 flex items-center justify-end gap-3">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={closeCreateCameraModal}
+                                    disabled={isCreatingCamera}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button size="sm" type="submit" disabled={isCreatingCamera}>
+                                    {isCreatingCamera ? "Creating..." : "Create"}
+                                </Button>
+                            </div>
+                        </form>
+                    </Modal>
 
-            <Modal
-                isOpen={editBranchModal.isOpen}
-                onClose={closeEditBranchModal}
-                className="max-w-[584px] p-5 lg:p-8"
-            >
-                <form onSubmit={onRenameBranchSubmit}>
-                    <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
-                        Edit branch name
-                    </h4>
+                    <Modal
+                        isOpen={createSensorModal.isOpen}
+                        onClose={closeCreateSensorModal}
+                        className="max-w-[584px] p-5 lg:p-8"
+                    >
+                        <form onSubmit={onCreateSensorSubmit}>
+                            <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
+                                Create sensor
+                            </h4>
 
-                    <div className="grid grid-cols-1 gap-y-3">
-                        <div>
-                            <Label htmlFor="branch-name">Branch name</Label>
-                            <Input
-                                id="branch-name"
-                                name="name"
-                                type="text"
-                                placeholder="e.g. Main campus"
-                                defaultValue={branchName}
-                                onChange={(e) => setBranchName(e.target.value)}
-                                error={Boolean(renameError)}
-                                hint={renameError ?? undefined}
-                                disabled={isRenaming}
-                            />
-                        </div>
-                    </div>
+                            <div className="grid grid-cols-1 gap-y-3">
+                                <div>
+                                    <Label htmlFor="sensor-name">Sensor name</Label>
+                                    <Input
+                                        id="sensor-name"
+                                        name="name"
+                                        type="text"
+                                        placeholder="e.g. Room 101"
+                                        defaultValue={sensorName}
+                                        onChange={(e) => setSensorName(e.target.value)}
+                                        error={Boolean(createSensorError)}
+                                        hint={createSensorError ?? undefined}
+                                        disabled={isCreatingSensor}
+                                    />
+                                </div>
+                            </div>
 
-                    <div className="mt-6 flex items-center justify-end gap-3">
-                        <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={closeEditBranchModal}
-                            disabled={isRenaming}
-                        >
-                            Cancel
-                        </Button>
-                        <Button size="sm" type="submit" disabled={isRenaming}>
-                            {isRenaming ? "Saving..." : "Save"}
-                        </Button>
-                    </div>
-                </form>
-            </Modal>
+                            <div className="mt-6 flex items-center justify-end gap-3">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={closeCreateSensorModal}
+                                    disabled={isCreatingSensor}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button size="sm" type="submit" disabled={isCreatingSensor}>
+                                    {isCreatingSensor ? "Creating..." : "Create"}
+                                </Button>
+                            </div>
+                        </form>
+                    </Modal>
+
+                    <Modal
+                        isOpen={editBranchModal.isOpen}
+                        onClose={closeEditBranchModal}
+                        className="max-w-[584px] p-5 lg:p-8"
+                    >
+                        <form onSubmit={onRenameBranchSubmit}>
+                            <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
+                                Edit branch name
+                            </h4>
+
+                            <div className="grid grid-cols-1 gap-y-3">
+                                <div>
+                                    <Label htmlFor="branch-name">Branch name</Label>
+                                    <Input
+                                        id="branch-name"
+                                        name="name"
+                                        type="text"
+                                        placeholder="e.g. Main campus"
+                                        defaultValue={branchName}
+                                        onChange={(e) => setBranchName(e.target.value)}
+                                        error={Boolean(renameError)}
+                                        hint={renameError ?? undefined}
+                                        disabled={isRenaming}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex items-center justify-end gap-3">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={closeEditBranchModal}
+                                    disabled={isRenaming}
+                                >
+                                    Cancel
+                                </Button>
+                                <Button size="sm" type="submit" disabled={isRenaming}>
+                                    {isRenaming ? "Saving..." : "Save"}
+                                </Button>
+                            </div>
+                        </form>
+                    </Modal>
+                </>
+            ) : null}
         </div>
     );
 }

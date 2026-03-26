@@ -8,6 +8,7 @@ import { ChevronDownIcon, GridIcon, PlusIcon, UserCircleIcon, UserMultipleIcon, 
 import { createBranch, getBranches } from "@/libs/actions";
 import { onBranchesChanged } from "@/libs/branchEvents";
 import { type CurrentUser, getCurrentUser } from "@/libs/auth";
+import { isAdminOrSuperadmin } from "@/libs/roles";
 import Button from "@/components/ui/button/Button";
 import { Modal } from "@/components/ui/modal";
 import Label from "@/components/form/Label";
@@ -297,8 +298,7 @@ const AppSidebar: React.FC = () => {
     );
 
     const staticNavItems = useMemo((): NavItem[] => {
-        const role = (currentUser as any)?.role;
-        const isAdmin = role === "admin";
+        const isAdmin = isAdminOrSuperadmin(currentUser);
         return navItemStatic.filter((item) => {
             if (item.path === "/users") return isAdmin;
             return true;
@@ -306,6 +306,7 @@ const AppSidebar: React.FC = () => {
     }, [currentUser]);
 
     const menuItems: NavItem[] = useMemo(() => {
+        const isAdmin = isAdminOrSuperadmin(currentUser);
         return [
             ...staticNavItems.slice(0, 1),
             {
@@ -316,15 +317,19 @@ const AppSidebar: React.FC = () => {
                         name: branch.name,
                         path: `/branches/${branch.branch_id}`,
                     })),
-                    {
-                        name: "New branch",
-                        onclick: openCreateBranchModal,
-                    },
+                    ...(isAdmin
+                        ? [
+                            {
+                                name: "New branch",
+                                onclick: openCreateBranchModal,
+                            },
+                        ]
+                        : []),
                 ],
             },
             ...staticNavItems.slice(1),
         ];
-    }, [openCreateBranchModal, navItems, staticNavItems]);
+    }, [currentUser, openCreateBranchModal, navItems, staticNavItems]);
 
     const keepBranchSelectionSubmenu: { type: "main" | "others"; index: number } | null = useMemo(() => {
         let bestMatch: { type: "main" | "others"; index: number } | null = null;
@@ -446,10 +451,14 @@ const AppSidebar: React.FC = () => {
                                                 name: branch.name,
                                                 path: `/branches/${branch.branch_id}`,
                                             })),
-                                            {
-                                                name: "New branch",
-                                                onclick: openCreateBranchModal,
-                                            },
+                                            ...(isAdminOrSuperadmin(currentUser)
+                                                ? [
+                                                    {
+                                                        name: "New branch",
+                                                        onclick: openCreateBranchModal,
+                                                    },
+                                                ]
+                                                : []),
                                         ],
                                     },
                                     ...staticNavItems.slice(1),

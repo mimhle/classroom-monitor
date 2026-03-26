@@ -2,6 +2,7 @@
 
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
+import { normalizeRole } from "@/libs/roles";
 
 export type CurrentUser = {
     user_id: string;
@@ -81,11 +82,17 @@ export async function requireAuth(opts?: { redirectTo?: string }) {
     return user;
 }
 
-export async function requireRole(role: string, opts?: { redirectTo?: string }) {
+export async function requireRole(role: string | string[], opts?: { redirectTo?: string }) {
     const user = await requireAuth(opts);
-    if ((user as any)?.role !== role) {
+
+    const allowed = Array.isArray(role) ? role : [role];
+    const userRole = normalizeRole((user as any)?.role);
+
+    const ok = allowed.map((r) => normalizeRole(r)).includes(userRole);
+    if (!ok) {
         // Keep behavior simple: bounce non-admins away.
         redirect(opts?.redirectTo ?? "/");
     }
+
     return user;
 }

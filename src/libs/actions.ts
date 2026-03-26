@@ -323,3 +323,135 @@ export async function updateSensor(id: string, input: CreateSensorInput) {
         });
     });
 }
+
+export async function getBranchCameras(branchId: string): Promise<{
+    count: number;
+    items: {
+        camera_id: string;
+        branch_id: string;
+        name: string;
+        secret: string;
+        updated_at: string;
+    }[];
+}> {
+    return fetch(`/api/branches/${encodeURIComponent(branchId)}/cameras`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch branch cameras: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""
+                }`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function getCamera(id: string): Promise<{
+    camera_id: string;
+    branch_id: string;
+    name: string;
+    secret: string;
+    updated_at: string;
+}> {
+    return fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch camera: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function deleteCamera(id: string) {
+    return fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to delete camera: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+    });
+}
+
+export type CreateCameraInput = {
+    name: string;
+    branch_id: string;
+};
+
+export async function createCamera(input: CreateCameraInput) {
+    return fetch(`/api/cameras`, {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to create camera: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function updateCamera(id: string, input: CreateCameraInput) {
+    return fetch(`/api/cameras/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to update camera: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function getCameraUrl(cameraId: string): Promise<{
+    access_token: string;
+    stream_url: string;
+    expires_at: string;
+}> {
+    return fetch(`/api/cameras/request-access?camera_id=${encodeURIComponent(cameraId)}`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch camera URL: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
