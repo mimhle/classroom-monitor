@@ -241,7 +241,9 @@ export default function CameraPage() {
                 ) : streamError ? (
                     <div className="text-sm text-red-600">{streamError}</div>
                 ) : streamUrl ? (
-                    <HlsPlayer src={streamUrl}/>
+                    <div className="overflow-visible flex flex-row justify-center">
+                        <HlsPlayer src={streamUrl} className="max-h-[70dvh] w-fit"/>
+                    </div>
                 ) : (
                     <div className="text-sm text-gray-500">No stream available.</div>
                 )}
