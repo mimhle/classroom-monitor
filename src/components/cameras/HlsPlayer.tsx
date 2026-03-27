@@ -45,6 +45,9 @@ export default function HlsPlayer({
         const video = videoRef.current;
         if (!video) return;
 
+        // Some video attributes aren't in React's typed props; set them directly.
+        video.disableRemotePlayback = true;
+
         // Reset element state when src changes to avoid MediaSource leftovers.
         try {
             video.pause();
@@ -96,17 +99,35 @@ export default function HlsPlayer({
                     return;
                 }
 
+                // Note: lowLatencyMode is great for LL-HLS, but can be harsher on flaky networks.
+                // We keep it enabled, but the buffer/live-sync settings below are tuned to reduce stalls.
                 const config: Record<string, unknown> = {
                     enableWorker: true,
-                    lowLatencyMode: true,
+                    lowLatencyMode: false,
+
+                    // Recoverability
+                    fragLoadingTimeOut: 20000,
+                    fragLoadingMaxRetry: 6,
+                    fragLoadingRetryDelay: 1000,
+                    fragLoadingMaxRetryTimeout: 10000,
+                    manifestLoadingTimeOut: 20000,
+                    manifestLoadingMaxRetry: 5,
+                    manifestLoadingRetryDelay: 1000,
+                    manifestLoadingMaxRetryTimeout: 10000,
+
                     // Live streams can run forever; cap buffers to avoid memory bloat and decoding issues.
-                    backBufferLength: live ? 30 : undefined, // seconds kept behind currentTime
-                    maxBufferLength: live ? 30 : 60, // forward buffer target (seconds)
-                    maxMaxBufferLength: live ? 60 : 120,
+                    backBufferLength: live ? 20 : undefined, // seconds kept behind currentTime
+                    maxBufferLength: live ? 20 : 60, // forward buffer target (seconds)
+                    maxMaxBufferLength: live ? 40 : 120,
+
                     // Stay close to live edge.
                     liveSyncDurationCount: live ? 2 : undefined,
                     liveMaxLatencyDurationCount: live ? 6 : undefined,
-                    maxLiveSyncPlaybackRate: live ? 1.5 : undefined,
+                    maxLiveSyncPlaybackRate: live ? 1.4 : undefined,
+
+                    // When drifting, let hls.js nudge playback rate rather than letting us fall behind.
+                    // (kept small to avoid 'chipmunk' audio)
+                    // If your stream has no audio, this is still fine.
                 };
 
                 // Drop undefined values (hls.js doesn't love unknown/undefined keys).
@@ -123,22 +144,104 @@ export default function HlsPlayer({
                 let networkErrorRetries = 0;
                 let mediaErrorRetries = 0;
 
-                const seekToLiveEdgeIfNeeded = () => {
-                    if (!live) return;
+                // Stall recovery state (bounded) to avoid infinite loops.
+                let stallRecoveries = 0;
+                let lastStallRecoveryAt = 0;
+
+                const seekToLiveEdgeIfNeeded = (reason?: string) => {
+                    if (!live) return false;
                     const v = videoRef.current;
-                    if (!v) return;
+                    if (!v) return false;
+
+                    // Prefer hls.js live sync position when available.
+                    const liveSyncPos = typeof hls?.liveSyncPosition === "number" ? hls.liveSyncPosition : undefined;
+
+                    // Fallback to buffered end.
                     const b = v.buffered;
-                    if (!b || b.length === 0) return;
-                    const end = b.end(b.length - 1);
-                    // If we drift far from the live edge (or buffer becomes huge), hop closer.
-                    const distance = end - v.currentTime;
-                    if (distance > 20) {
+                    const bufferedEnd = b && b.length ? b.end(b.length - 1) : undefined;
+
+                    const target = liveSyncPos ?? (bufferedEnd !== undefined ? Math.max(0, bufferedEnd - 1) : undefined);
+                    if (target === undefined || Number.isNaN(target)) return false;
+
+                    // If we're too far behind the target, hop closer.
+                    const distance = target - v.currentTime;
+                    if (distance > 8) {
                         try {
-                            v.currentTime = Math.max(0, end - 2);
-                            log("seekToLiveEdge", { end, from: v.currentTime, distance });
+                            const from = v.currentTime;
+                            v.currentTime = Math.max(0, target);
+                            log("seekToLiveEdge", {
+                                reason,
+                                from,
+                                to: v.currentTime,
+                                target,
+                                liveSyncPos,
+                                bufferedEnd,
+                                distance
+                            });
+                            return true;
                         } catch {
                             // ignore
                         }
+                    }
+                    return false;
+                };
+
+                const tryRecoverFromStall = (reason: string) => {
+                    if (cancelled) return;
+                    const now = Date.now();
+
+                    // Basic backoff (avoid aggressive loops on very bad connections).
+                    if (now - lastStallRecoveryAt < 1500) return;
+                    lastStallRecoveryAt = now;
+
+                    stallRecoveries += 1;
+                    log("stall recovery", { reason, stallRecoveries });
+
+                    // 1) Seek nearer live edge (usually fixes BUFFER_STALLED when we fell behind).
+                    const didSeek = seekToLiveEdgeIfNeeded(reason);
+
+                    // 2) Kick loader if it stopped.
+                    try {
+                        hls?.startLoad();
+                    } catch {
+                        // ignore
+                    }
+
+                    // 3) Ensure playback continues.
+                    const v = videoRef.current;
+                    if (v && autoPlay) {
+                        void v.play().catch(() => {
+                            // ignore autoplay blocking
+                        });
+                    }
+
+                    // 4) If repeated stalls, try media error recovery once in a while.
+                    if (stallRecoveries === 3 || (stallRecoveries > 3 && stallRecoveries % 3 === 0)) {
+                        try {
+                            hls?.recoverMediaError?.();
+                            log("stall recovery: recoverMediaError");
+                        } catch {
+                            // ignore
+                        }
+                    }
+
+                    // 5) If we can't unstick after several attempts, restart the load pipeline.
+                    if (!didSeek && stallRecoveries >= 8) {
+                        log("stall recovery: reload pipeline");
+                        try {
+                            hls?.stopLoad();
+                        } catch {
+                            // ignore
+                        }
+                        setTimeout(() => {
+                            if (cancelled) return;
+                            try {
+                                hls?.startLoad(-1);
+                            } catch {
+                                // ignore
+                            }
+                            seekToLiveEdgeIfNeeded("reload pipeline");
+                        }, 500);
                     }
                 };
 
@@ -152,6 +255,9 @@ export default function HlsPlayer({
                         live: data?.levelDetails?.live,
                     });
 
+                    // reset stall state on successful parse
+                    stallRecoveries = 0;
+
                     if (autoPlay) {
                         const v = videoRef.current;
                         if (v) {
@@ -164,7 +270,7 @@ export default function HlsPlayer({
 
                 hls.on(Hls.Events.LEVEL_UPDATED, () => {
                     // Periodic nudge to avoid falling behind on truly infinite streams.
-                    seekToLiveEdgeIfNeeded();
+                    seekToLiveEdgeIfNeeded("level updated");
                 });
 
                 hls.on(Hls.Events.ERROR, (_event: unknown, data: any) => {
@@ -187,8 +293,11 @@ export default function HlsPlayer({
 
                     if (!fatal) {
                         // Non-fatal errors are common on live streams; try to keep going.
-                        if (details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
-                            seekToLiveEdgeIfNeeded();
+                        if (
+                            details === Hls.ErrorDetails.BUFFER_STALLED_ERROR ||
+                            details === Hls.ErrorDetails.BUFFER_NUDGE_ON_STALL
+                        ) {
+                            tryRecoverFromStall(details);
                         }
                         return;
                     }
@@ -229,7 +338,7 @@ export default function HlsPlayer({
                                     // ignore
                                 }
                                 // If we recovered, also nudge back to live edge.
-                                seekToLiveEdgeIfNeeded();
+                                seekToLiveEdgeIfNeeded("media error");
                             } else {
                                 log("MEDIA_ERROR: giving up");
                                 try {
@@ -260,21 +369,35 @@ export default function HlsPlayer({
                 const vEl = videoRef.current;
                 const onStalled = () => {
                     log("video stalled");
-                    seekToLiveEdgeIfNeeded();
+                    tryRecoverFromStall("video stalled");
                 };
                 const onWaiting = () => {
                     log("video waiting");
-                    seekToLiveEdgeIfNeeded();
+                    tryRecoverFromStall("video waiting");
                 };
+                const onPause = () => {
+                    if (!live) return;
+                    // Some browsers pause silently after long runs; make a best-effort to resume.
+                    const v = videoRef.current;
+                    if (!v) return;
+                    if (autoPlay && !v.ended) {
+                        void v.play().catch(() => {
+                            // ignore
+                        });
+                    }
+                };
+
                 if (vEl) {
                     vEl.addEventListener("stalled", onStalled);
                     vEl.addEventListener("waiting", onWaiting);
+                    vEl.addEventListener("pause", onPause);
                 }
 
                 return () => {
                     if (vEl) {
                         vEl.removeEventListener("stalled", onStalled);
                         vEl.removeEventListener("waiting", onWaiting);
+                        vEl.removeEventListener("pause", onPause);
                     }
                 };
             } catch (e) {
@@ -312,6 +435,7 @@ export default function HlsPlayer({
                 muted={muted}
                 playsInline={playsInline}
                 poster={poster}
+                preload={live ? "auto" : "metadata"}
                 className="h-full object-contain"
             />
 
