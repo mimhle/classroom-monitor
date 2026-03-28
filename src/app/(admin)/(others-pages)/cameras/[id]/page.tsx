@@ -1,19 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import ComponentCard from "@/components/common/ComponentCard";
 import HlsPlayer from "@/components/cameras/HlsPlayer";
 import Badge from "@/components/ui/badge/Badge";
 import Button from "@/components/ui/button/Button";
-import { TrashBinIcon } from "@/icons";
+import { PencilIcon, TrashBinIcon } from "@/icons";
 import { useNotification } from "@/components/ui/notification";
 import { getCurrentUser } from "@/libs/auth";
 import { isAdminOrSuperadmin } from "@/libs/roles";
-import { deleteCamera, getCamera, getCameraUrl, resetCameraSecret } from "@/libs/actions";
+import { deleteCamera, getCamera, getCameraUrl, resetCameraSecret, updateCamera } from "@/libs/actions";
 import { Modal } from "@/components/ui/modal";
 import { useModal } from "@/hooks/useModal";
+import Label from "@/components/form/Label";
+import Input from "@/components/form/input/InputField";
 
 type Camera = {
     camera_id: string;
@@ -46,6 +47,11 @@ export default function CameraPage() {
     const [isDeleting, setIsDeleting] = useState(false);
 
     const [isResettingSecret, setIsResettingSecret] = useState(false);
+
+    const editCameraModal = useModal(false);
+    const [cameraName, setCameraName] = useState("");
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
 
     const cameraSecretModal = useModal(false);
     const [createdCameraSecret, setCreatedCameraSecret] = useState<string | null>(null);
@@ -142,14 +148,63 @@ export default function CameraPage() {
         };
     }, [cameraId]);
 
-    const backHref = useMemo(() => {
-        if (camera?.branch_id) return `/branches/${encodeURIComponent(camera.branch_id)}`;
-        return "/branches";
-    }, [camera?.branch_id]);
-
     function closeCameraSecretModal() {
         cameraSecretModal.closeModal();
         setCreatedCameraSecret(null);
+    }
+
+    function openEditCameraModal() {
+        if (!canEdit) return;
+        setSaveError(null);
+        setCameraName(camera?.name ?? "");
+        editCameraModal.openModal();
+    }
+
+    function closeEditCameraModal() {
+        editCameraModal.closeModal();
+        setSaveError(null);
+        setCameraName("");
+    }
+
+    async function onEditCameraSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        if (!canEdit) return;
+
+        if (!cameraId || !camera) {
+            setSaveError("Missing camera id.");
+            return;
+        }
+
+        const name = cameraName.trim();
+        if (!name) {
+            setSaveError("Camera name is required.");
+            return;
+        }
+
+        if (name === camera.name) {
+            closeEditCameraModal();
+            return;
+        }
+
+        const branch_id = camera.branch_id;
+
+        setIsSaving(true);
+        setSaveError(null);
+        try {
+            const updated = (await updateCamera(cameraId, { name, branch_id })) as any;
+            setCamera((prev) => (prev ? { ...prev, ...(updated ?? {}), name } : prev));
+            closeEditCameraModal();
+            notify({
+                variant: "success",
+                title: "Camera updated",
+                message: `Camera renamed to “${name}”.`,
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to update camera.";
+            setSaveError(message);
+        } finally {
+            setIsSaving(false);
+        }
     }
 
     async function copyCameraSecretToClipboard() {
@@ -257,50 +312,79 @@ export default function CameraPage() {
 
     if (loading) {
         return (
-            <div className="space-y-6">
-                <ComponentCard title="Camera">
-                    <div className="text-sm text-gray-500">Loading…</div>
-                </ComponentCard>
+            <div className="p-4 sm:p-6 lg:p-8">
+                <div className="mx-auto w-full max-w-5xl">
+                    <div
+                        className="rounded-xl border border-gray-200 bg-white p-5 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+                        <p className="text-sm text-gray-500 dark:text-gray-400">Loading…</p>
+                    </div>
+                </div>
             </div>
         );
     }
 
     if (error) {
         return (
-            <div className="space-y-6">
-                <ComponentCard title="Camera">
-                    <div className="text-sm text-red-600">{error}</div>
-                </ComponentCard>
+            <div className="p-4 sm:p-6 lg:p-8">
+                <div className="mx-auto w-full max-w-5xl">
+                    <div
+                        className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                        {error}
+                    </div>
+                    <button
+                        className="mt-4 text-sm text-gray-600 underline dark:text-gray-300"
+                        onClick={() => router.back()}
+                    >
+                        Go back
+                    </button>
+                </div>
             </div>
         );
     }
 
+    if (!camera) return null;
+
     return (
-        <div className="space-y-6">
-            <ComponentCard title={`${camera?.name ?? "Camera"}`}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="min-w-0">
-                        <div className="text-xs text-gray-500">Camera ID</div>
-                        <div className="truncate text-sm font-medium text-gray-900">{camera?.camera_id}</div>
+        <div className="p-8">
+            <div className="mx-auto w-full max-w-5xl flex flex-col gap-6">
+                <div className="mb-1 flex flex-row justify-between">
+                    <div>
+                        <div className="flex items-center gap-1">
+                            <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">{camera?.name ?? "Camera"}</h1>
+                            {canEdit ? (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={openEditCameraModal}
+                                    disabled={isDeleting || isResettingSecret || isSaving}
+                                    className="h-8 w-8 px-0 py-0 bg-none !bg-transparent !ring-0 !ring-transparent shadow-none hover:ring-0"
+                                    startIcon={<PencilIcon/>}
+                                >
+                                    <span className="sr-only">Edit</span>
+                                </Button>
+                            ) : null}
+                        </div>
+                        <div
+                            className="mt-1 flex flex-wrap items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+                            <span>
+                                Camera ID: <span className="font-mono">{camera?.camera_id}</span>
+                            </span>
+                            {camera?.branch_id ? (
+                                <Badge color="light" variant="light">
+                                    Branch: {camera.branch_id}
+                                </Badge>
+                            ) : null}
+                        </div>
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <Link href={backHref} className="text-sm text-brand-600 hover:underline">
-                            Back to cameras
-                        </Link>
-                        {camera?.branch_id ? (
-                            <Badge color="light" variant="light">
-                                Branch: {camera.branch_id}
-                            </Badge>
-                        ) : null}
-
                         {canEdit ? (
                             <>
                                 <Button
                                     variant="outline"
                                     size="sm"
                                     onClick={onResetSecret}
-                                    disabled={isResettingSecret || isDeleting}
+                                    disabled={isResettingSecret || isDeleting || isSaving}
                                 >
                                     {isResettingSecret ? "Resetting…" : "Reset secret"}
                                 </Button>
@@ -309,7 +393,7 @@ export default function CameraPage() {
                                     size="sm"
                                     className="ring-orange-600 bg-orange-100"
                                     onClick={onDelete}
-                                    disabled={isDeleting || isResettingSecret}
+                                    disabled={isDeleting || isResettingSecret || isSaving}
                                 >
                                     <TrashBinIcon/>
                                 </Button>
@@ -317,53 +401,94 @@ export default function CameraPage() {
                         ) : null}
                     </div>
                 </div>
-            </ComponentCard>
 
-            <ComponentCard title="Live stream">
-                {streamLoading ? (
-                    <div className="text-sm text-gray-500">Requesting access token…</div>
-                ) : streamError ? (
-                    <div className="text-sm text-red-600">{streamError}</div>
-                ) : streamUrl ? (
-                    <div className="overflow-visible flex flex-row justify-center">
-                        <HlsPlayer src={streamUrl} className="max-h-[70dvh] w-fit"/>
-                    </div>
-                ) : (
-                    <div className="text-sm text-gray-500">No stream available.</div>
-                )}
-            </ComponentCard>
+                {canEdit ? (
+                    <Modal
+                        isOpen={editCameraModal.isOpen}
+                        onClose={closeEditCameraModal}
+                        className="max-w-[700px] p-6 lg:p-10"
+                    >
+                        <form onSubmit={onEditCameraSubmit} className="space-y-6">
+                            <div>
+                                <h4 className="mb-2 text-2xl font-semibold text-gray-800 dark:text-white/90">
+                                    Edit camera
+                                </h4>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">
+                                    Update this camera’s display name.
+                                </p>
+                            </div>
 
-            <Modal
-                isOpen={cameraSecretModal.isOpen}
-                onClose={closeCameraSecretModal}
-                className="max-w-[584px] p-5 lg:p-8"
-            >
-                <div>
-                    <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
-                        Camera secret
-                    </h4>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                        Copy and save this secret now. For security reasons, it may not be shown again.
-                    </p>
+                            <div>
+                                <Label>Camera name</Label>
+                                <Input
+                                    defaultValue={cameraName}
+                                    onChange={(e) => setCameraName(e.target.value)}
+                                    placeholder="Enter camera name"
+                                />
+                            </div>
 
-                    <div
-                        className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900">
-                        <div className="text-xs text-gray-500 dark:text-gray-400">Secret</div>
-                        <div className="mt-1 break-all font-mono text-sm text-gray-800 dark:text-white/90">
-                            {createdCameraSecret ?? ""}
+                            {saveError ? (
+                                <div className="text-sm text-red-600 dark:text-red-400">{saveError}</div>
+                            ) : null}
+
+                            <div className="flex items-center justify-end gap-3">
+                                <Button variant="outline" type="button" onClick={closeEditCameraModal}>
+                                    Cancel
+                                </Button>
+                                <Button type="submit" disabled={isSaving}>
+                                    {isSaving ? "Saving…" : "Save"}
+                                </Button>
+                            </div>
+                        </form>
+                    </Modal>
+                ) : null}
+
+                <ComponentCard title="Live stream">
+                    {streamLoading ? (
+                        <div className="text-sm text-gray-500">Requesting access token…</div>
+                    ) : streamError ? (
+                        <div className="text-sm text-red-600">{streamError}</div>
+                    ) : streamUrl ? (
+                        <div className="overflow-visible flex flex-row justify-center">
+                            <HlsPlayer src={streamUrl} className="max-h-[70dvh] w-fit"/>
+                        </div>
+                    ) : (
+                        <div className="text-sm text-gray-500">No stream available.</div>
+                    )}
+                </ComponentCard>
+
+                <Modal
+                    isOpen={cameraSecretModal.isOpen}
+                    onClose={closeCameraSecretModal}
+                    className="max-w-[584px] p-5 lg:p-8"
+                >
+                    <div>
+                        <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
+                            Camera secret
+                        </h4>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">
+                            Copy and save this secret now. For security reasons, it may not be shown again.
+                        </p>
+
+                        <div
+                            className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900">
+                            <div className="text-xs text-gray-500 dark:text-gray-400">Secret</div>
+                            <div className="mt-1 break-all font-mono text-sm text-gray-800 dark:text-white/90">
+                                {createdCameraSecret ?? ""}
+                            </div>
+                        </div>
+
+                        <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                            <Button size="sm" variant="outline" onClick={closeCameraSecretModal}>
+                                Close
+                            </Button>
+                            <Button size="sm" variant="outline" onClick={copyCameraSecretToClipboard}>
+                                Copy
+                            </Button>
                         </div>
                     </div>
-
-                    <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
-                        <Button size="sm" variant="outline" onClick={closeCameraSecretModal}>
-                            Close
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={copyCameraSecretToClipboard}>
-                            Copy
-                        </Button>
-                    </div>
-                </div>
-            </Modal>
+                </Modal>
+            </div>
         </div>
     );
 }

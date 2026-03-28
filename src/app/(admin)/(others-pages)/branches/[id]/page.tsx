@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
     createCamera,
@@ -23,6 +23,7 @@ import Input from "@/components/form/input/InputField";
 import { getCurrentUser } from "@/libs/auth";
 import { isAdminOrSuperadmin } from "@/libs/roles";
 import Badge from "@/components/ui/badge/Badge";
+import { deriveAlertBadge } from "@/libs/branchStatus";
 
 type Branch = {
     branch_id: string;
@@ -30,99 +31,6 @@ type Branch = {
     name: string;
     alert: unknown;
 };
-
-function deriveAlertBadge(alert: unknown): {
-    label: string;
-    color: React.ComponentProps<typeof Badge>["color"];
-    variant: React.ComponentProps<typeof Badge>["variant"];
-    title?: string;
-} {
-    // Normalize the unknown alert payload to a small UI summary.
-    // Treat empty values as no alerts.
-    if (
-        alert == null ||
-        alert === false ||
-        alert === 0 ||
-        alert === "" ||
-        (Array.isArray(alert) && alert.length === 0)
-    ) {
-        return { label: "None", color: "light", variant: "light", title: "No alerts" };
-    }
-
-    if (typeof alert === "number") {
-        if (alert <= 0) {
-            return { label: "None", color: "light", variant: "light", title: "No alerts" };
-        }
-        const label = `${alert} alert${alert === 1 ? "" : "s"}`;
-        return { label, color: "warning", variant: "solid", title: label };
-    }
-
-    if (typeof alert === "boolean") {
-        return {
-            label: alert ? "Active" : "None",
-            color: alert ? "warning" : "light",
-            variant: alert ? "solid" : "light",
-            title: alert ? "Alerts active" : "No alerts",
-        };
-    }
-
-    if (Array.isArray(alert)) {
-        const n = alert.length;
-        if (n === 0) {
-            return { label: "None", color: "light", variant: "light", title: "No alerts" };
-        }
-        const label = `${n} alert${n === 1 ? "" : "s"}`;
-        return { label, color: "warning", variant: "solid", title: label };
-    }
-
-    if (typeof alert === "object") {
-        const obj = alert as Record<string, unknown>;
-
-        // Common shapes: {count: number}, {alerts: []}, {items: []}
-        const count =
-            typeof obj.count === "number"
-                ? obj.count
-                : typeof obj.total === "number"
-                    ? obj.total
-                    : undefined;
-
-        const arrLike =
-            Array.isArray(obj.alerts)
-                ? obj.alerts.length
-                : Array.isArray(obj.items)
-                    ? obj.items.length
-                    : Array.isArray(obj.data)
-                        ? obj.data.length
-                        : undefined;
-
-        const n = count ?? arrLike;
-        if (typeof n === "number") {
-            if (n <= 0) {
-                return { label: "None", color: "light", variant: "light", title: "No alerts" };
-            }
-            const label = `${n} alert${n === 1 ? "" : "s"}`;
-            return { label, color: "warning", variant: "solid", title: label };
-        }
-
-        // Empty object -> none.
-        if (Object.keys(obj).length === 0) {
-            return { label: "None", color: "light", variant: "light", title: "No alerts" };
-        }
-
-        // Anything else truthy object: treat as active.
-        let title: string | undefined;
-        try {
-            title = JSON.stringify(alert);
-            if (title && title.length > 140) title = title.slice(0, 140) + "…";
-        } catch {
-            // ignore
-        }
-        return { label: "Active", color: "warning", variant: "solid", title };
-    }
-
-    // Fallback for other truthy primitives (e.g. symbol, bigint).
-    return { label: "Active", color: "warning", variant: "solid" };
-}
 
 export default function BranchPage() {
     const params = useParams<{ id: string }>();
@@ -174,6 +82,15 @@ export default function BranchPage() {
     const [editUserGroupId, setEditUserGroupId] = useState<string | null>(null);
 
     const [canEdit, setCanEdit] = useState(false);
+
+    // Disable creating more cameras if at least one already exists in this branch.
+    // Note: we only enforce this when the cameras list has loaded successfully.
+    const hasCameras = useMemo(() => {
+        return !camerasLoading && !camerasError && cameras.length > 0;
+    }, [cameras, camerasLoading, camerasError]);
+    const disableAddCamera = useMemo(() => {
+        return canEdit && hasCameras;
+    }, [canEdit, hasCameras]);
 
     useEffect(() => {
         let cancelled = false;
@@ -605,9 +522,22 @@ export default function BranchPage() {
                     <div className="flex items-center gap-2">
                         {canEdit ? (
                             <>
-                                <Button size="sm" onClick={openCreateCameraModal}>
-                                    Add camera
-                                </Button>
+                                <span
+                                    title={
+                                        disableAddCamera
+                                            ? "This branch already has a camera."
+                                            : undefined
+                                    }
+                                    className="inline-flex"
+                                >
+                                    <Button
+                                        size="sm"
+                                        onClick={openCreateCameraModal}
+                                        disabled={disableAddCamera}
+                                    >
+                                        Add camera
+                                    </Button>
+                                </span>
                                 <Button size="sm" onClick={openCreateSensorModal}>
                                     Add sensor
                                 </Button>
@@ -629,11 +559,10 @@ export default function BranchPage() {
 
                 <div className="mt-6 space-y-6">
                     <ComponentCard
-                        title="Cameras"
+                        title={cameras.length === 1 ? "Camera" : "Cameras"}
                         desc={
                             camerasLoading
-                                ? "Loading cameras…"
-                                : `${cameras.length} camera${cameras.length === 1 ? "" : "s"} in this branch.`
+                                ? "Loading cameras…" : ""
                         }
                     >
                         {camerasError ? (
@@ -691,7 +620,7 @@ export default function BranchPage() {
                     </ComponentCard>
 
                     <ComponentCard
-                        title="Sensors"
+                        title={sensors.length === 1 ? "Sensor" : "Sensors"}
                         desc={
                             sensorsLoading
                                 ? "Loading sensors…"

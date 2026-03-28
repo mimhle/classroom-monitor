@@ -573,11 +573,25 @@ export default function SensorPage() {
     if (!sensor) return null;
 
     return (
-        <div className="p-4 sm:p-6 lg:p-8">
-            <div className="mx-auto w-full max-w-5xl">
-                <div className="mb-6 flex flex-row justify-between">
+        <div className="p-8">
+            <div className="mx-auto w-full max-w-5xl flex flex-col gap-6">
+                <div className="mb-1 flex flex-row justify-between">
                     <div>
-                        <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">{sensor.name}</h1>
+                        <div className="flex items-center gap-1">
+                            <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">{sensor.name}</h1>
+                            {canEdit ? (
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={openEditSensorModal}
+                                    disabled={isDeleting || isSaving}
+                                    className="h-8 w-8 px-0 py-0 bg-none !bg-transparent !ring-0 !ring-transparent shadow-none hover:ring-0"
+                                    startIcon={<PencilIcon/>}
+                                >
+                                    <span className="sr-only">Edit</span>
+                                </Button>
+                            ) : null}
+                        </div>
                         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
                             Sensor ID: <span className="font-mono">{sensor.sensor_id}</span>
                         </p>
@@ -585,14 +599,6 @@ export default function SensorPage() {
                     <div className="flex items-center gap-2">
                         {canEdit ? (
                             <>
-                                <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={openEditSensorModal}
-                                    disabled={isDeleting || isSaving}
-                                >
-                                    <PencilIcon/>
-                                </Button>
                                 <Button
                                     variant="outline"
                                     size="sm"
