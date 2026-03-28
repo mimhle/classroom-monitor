@@ -156,6 +156,11 @@ export default function BranchPage() {
     const [isCreatingCamera, setIsCreatingCamera] = useState(false);
     const [createCameraError, setCreateCameraError] = useState<string | null>(null);
 
+    // Newly created camera secret modal/state
+    const cameraSecretModal = useModal(false);
+    const [createdCameraId, setCreatedCameraId] = useState<string | null>(null);
+    const [createdCameraSecret, setCreatedCameraSecret] = useState<string | null>(null);
+
     const createSensorModal = useModal(false);
     const [sensorName, setSensorName] = useState("");
     const [isCreatingSensor, setIsCreatingSensor] = useState(false);
@@ -336,6 +341,38 @@ export default function BranchPage() {
         setCreateCameraError(null);
     }
 
+    function openCameraSecretModal(cameraId: string, secret: string) {
+        setCreatedCameraId(cameraId);
+        setCreatedCameraSecret(secret);
+        cameraSecretModal.openModal();
+    }
+
+    function closeCameraSecretModal() {
+        cameraSecretModal.closeModal();
+        setCreatedCameraId(null);
+        setCreatedCameraSecret(null);
+    }
+
+    async function copyCameraSecretToClipboard() {
+        const secret = createdCameraSecret;
+        if (!secret) return;
+
+        try {
+            await navigator.clipboard.writeText(secret);
+            notify({
+                variant: "success",
+                title: "Copied",
+                message: "Camera secret copied to clipboard.",
+            });
+        } catch {
+            notify({
+                variant: "error",
+                title: "Copy failed",
+                message: "Couldn't copy to clipboard. Please copy it manually.",
+            });
+        }
+    }
+
     function openEditBranchModal() {
         if (!canEdit) return;
         setRenameError(null);
@@ -453,7 +490,7 @@ export default function BranchPage() {
         setIsCreatingCamera(true);
         setCreateCameraError(null);
         try {
-            const created = (await createCamera({ name, branch_id: id })) as any;
+            const created = await createCamera({ name, branch_id: id });
             await refreshCameras();
             closeCreateCameraModal();
 
@@ -463,9 +500,12 @@ export default function BranchPage() {
                 message: `“${name}” was created successfully.`,
             });
 
-            const createdCameraId: string | undefined = created?.camera_id;
-            if (createdCameraId) {
-                router.push(`/cameras/${encodeURIComponent(createdCameraId)}`);
+            // Show the secret immediately so the user can copy it.
+            if (created?.camera_id && created?.secret) {
+                openCameraSecretModal(created.camera_id, created.secret);
+            } else if (created?.camera_id) {
+                // Fallback if API didn't include secret for some reason.
+                router.push(`/cameras/${encodeURIComponent(created.camera_id)}`);
             }
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to create camera.";
@@ -845,6 +885,50 @@ export default function BranchPage() {
                                 </Button>
                             </div>
                         </form>
+                    </Modal>
+
+                    <Modal
+                        isOpen={cameraSecretModal.isOpen}
+                        onClose={closeCameraSecretModal}
+                        className="max-w-[584px] p-5 lg:p-8"
+                    >
+                        <div>
+                            <h4 className="mb-2 text-lg font-medium text-gray-800 dark:text-white/90">
+                                Camera secret
+                            </h4>
+                            <p className="text-sm text-gray-500 dark:text-gray-400">
+                                Copy and save this secret now. For security reasons, it may not be shown again.
+                            </p>
+
+                            <div
+                                className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900">
+                                <div className="text-xs text-gray-500 dark:text-gray-400">Secret</div>
+                                <div className="mt-1 break-all font-mono text-sm text-gray-800 dark:text-white/90">
+                                    {createdCameraSecret ?? ""}
+                                </div>
+                            </div>
+
+                            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                                <Button size="sm" variant="outline" onClick={closeCameraSecretModal}>
+                                    Close
+                                </Button>
+                                <Button size="sm" variant="outline" onClick={copyCameraSecretToClipboard}>
+                                    Copy
+                                </Button>
+                                {createdCameraId ? (
+                                    <Button
+                                        size="sm"
+                                        onClick={() => {
+                                            const cid = createdCameraId;
+                                            closeCameraSecretModal();
+                                            router.push(`/cameras/${encodeURIComponent(cid)}`);
+                                        }}
+                                    >
+                                        Go to camera
+                                    </Button>
+                                ) : null}
+                            </div>
+                        </div>
                     </Modal>
                 </>
             ) : null}

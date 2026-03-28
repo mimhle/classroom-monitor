@@ -394,7 +394,13 @@ export type CreateCameraInput = {
     branch_id: string;
 };
 
-export async function createCamera(input: CreateCameraInput) {
+export async function createCamera(input: CreateCameraInput): Promise<{
+    camera_id: string;
+    branch_id: string;
+    name: string;
+    secret: string;
+    created_at: string;
+}> {
     return fetch(`/api/cameras`, {
         method: "POST",
         headers: {
@@ -449,6 +455,29 @@ export async function getCameraUrl(cameraId: string): Promise<{
             const text = await res.text().catch(() => "");
             throw new Error(
                 `Failed to fetch camera URL: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function resetCameraSecret(cameraId: string): Promise<{
+    camera_id: string;
+    branch_id: string;
+    name: string;
+    secret: string;
+    updated_at: string;
+}> {
+    return fetch(`/api/cameras/${encodeURIComponent(cameraId)}/reset-secret`, {
+        method: "POST",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to reset camera secret: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
             );
         }
         return res.json().then((data) => {
