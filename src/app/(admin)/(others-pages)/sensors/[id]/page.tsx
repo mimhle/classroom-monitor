@@ -35,7 +35,7 @@ function formatCellValue(v: unknown) {
     }
 }
 
-function formatLocalDateTime(v: unknown) {
+export function formatLocalDateTime(v: unknown) {
     if (v === null || v === undefined) return "";
 
     // Accept Date/number(epochs)/string(ISO). Fall back to the original value if it doesn't parse.
@@ -75,7 +75,7 @@ function coerceNumber(v: unknown): number | null {
     return null;
 }
 
-function toEpochMs(v: unknown): number | null {
+export function toEpochMs(v: unknown): number | null {
     if (v instanceof Date) {
         const t = v.getTime();
         return Number.isNaN(t) ? null : t;
