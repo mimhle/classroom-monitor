@@ -5,12 +5,12 @@ export type ParsedSensorValue = {
     raw: unknown;
 };
 
-function looksLikeJsonString(v: string) {
+export function looksLikeJsonString(v: string) {
     const s = v.trim();
     return (s.startsWith("{") && s.endsWith("}")) || (s.startsWith("[") && s.endsWith("]"));
 }
 
-function tryParseJson(v: string): unknown {
+export function tryParseJson(v: string): unknown {
     if (!looksLikeJsonString(v)) return v;
     try {
         return JSON.parse(v);

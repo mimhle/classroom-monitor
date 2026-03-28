@@ -6,11 +6,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ComponentCard from "@/components/common/ComponentCard";
 import Badge from "@/components/ui/badge/Badge";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
-import { getBranches, getBranchSensors, getSensorData, type Sensor } from "@/libs/actions";
+import { getBranches, getBranchSensors, getPrediction, getSensorData, type Sensor } from "@/libs/actions";
 import { onBranchesChanged } from "@/libs/branchEvents";
 import { deriveAlertBadge } from "@/libs/branchStatus";
 import { parseSensorValue } from "@/libs/sensorValue";
 import { formatLocalDateTime, toEpochMs } from "@/app/(admin)/(others-pages)/sensors/[id]/page";
+import PredictionSparkline from "@/components/charts/sparkline/PredictionSparkline";
+import {
+    type BranchPrediction,
+    formatPredictedValue,
+    getPredictionSeries,
+    inferPredictionMetricFromSensor,
+    type PredictionMetric,
+} from "@/libs/predictionCompact";
 
 type Branch = {
     branch_id: string;
@@ -23,6 +31,7 @@ type SensorLatest = {
     sensor: Sensor;
     branch: { branch_id: string; name: string };
     latest: null | { created_at?: string; timestamp?: string; time?: string; updated_at?: string; value?: unknown };
+    prediction?: BranchPrediction | null;
 };
 
 type ParsedValuePreview =
@@ -47,21 +56,52 @@ function clampText(s: string, max: number) {
 }
 
 function buildValuePreview(parsed: ReturnType<typeof parseSensorValue>): ParsedValuePreview {
-    // If it's a scalar payload, keep it simple.
-    const scalar = parsed.fields?.value;
-    if (scalar !== undefined) {
+    const fields = parsed.fields ?? {};
+
+    // If it's a scalar payload, keep it simple (only when `value` is the only field).
+    const keys = Object.keys(fields);
+    const scalar = (fields as any).value;
+    if (keys.length === 1 && keys[0] === "value") {
         const txt = formatCellValue(scalar);
         return txt ? { kind: "scalar", text: clampText(txt, 120) } : { kind: "empty" };
     }
 
-    const entries = Object.entries(parsed.fields ?? {});
+    const entries = Object.entries(fields);
     if (entries.length === 0) return { kind: "empty" };
 
+    const normalizeKey = (k: string) => k.trim().toLowerCase();
+
+    function priorityRank(k: string): number {
+        const nk = normalizeKey(k);
+        // Direct / dotted matches.
+        if (nk === "co2" || nk === "co₂" || nk.endsWith(".co2") || nk.endsWith(".co₂")) return 0;
+        if (nk === "temp" || nk === "temperature" || nk.endsWith(".temp") || nk.endsWith(".temperature")) return 1;
+        if (nk === "rh" || nk === "humidity" || nk.endsWith(".rh") || nk.endsWith(".humidity")) return 2;
+        // Non-priority.
+        return 100;
+    }
+
     // Show up to 4 key/value pairs as a compact preview.
+    // Prefer CO2/temp/RH first, then everything else (alphabetical). Exclude the generic `value` key.
     const preview = entries
-        .sort(([a], [b]) => a.localeCompare(b))
+        .filter(([k]) => k !== "value")
+        .sort(([a], [b]) => {
+            const ra = priorityRank(a);
+            const rb = priorityRank(b);
+            if (ra !== rb) return ra - rb;
+            return normalizeKey(a).localeCompare(normalizeKey(b));
+        })
         .slice(0, 4)
         .map(([k, v]) => ({ k, v: clampText(formatCellValue(v), 60) }));
+
+    // If everything got filtered (edge case), fall back to including `value`.
+    if (preview.length === 0) {
+        const fallback = entries
+            .sort(([a], [b]) => normalizeKey(a).localeCompare(normalizeKey(b)))
+            .slice(0, 4)
+            .map(([k, v]) => ({ k, v: clampText(formatCellValue(v), 60) }));
+        return { kind: "json", preview: fallback };
+    }
 
     return { kind: "json", preview };
 }
@@ -101,6 +141,55 @@ function PrettySensorValue({ value }: { value: unknown }) {
             ) : null}
         </div>
     );
+}
+
+function CompactPrediction({
+    sensor,
+    latestValue,
+    prediction,
+}: {
+    sensor: { name?: string };
+    latestValue: unknown;
+    prediction: BranchPrediction | null | undefined;
+}) {
+    const inferred: PredictionMetric | null = inferPredictionMetricFromSensor(sensor, latestValue);
+
+    const metrics: PredictionMetric[] = (['co2', 'temp', 'rh'] as PredictionMetric[]).sort((a, b) => {
+        // Put inferred metric first (if any) but still show all metrics.
+        if (inferred && a === inferred) return -1;
+        if (inferred && b === inferred) return 1;
+        return 0;
+    });
+
+    const blocks = metrics
+        .map((metric) => {
+            const series = getPredictionSeries(prediction, metric);
+            if (!series || series.length === 0) return null;
+
+            const last = series.at(-1);
+            const decimals = metric === "co2" ? 0 : 1;
+            const unit = metric === "co2" ? "ppm" : metric === "temp" ? "°C" : "%";
+            const color = metric === "co2" ? "#F97316" : metric === "temp" ? "#465FFF" : "#22C55E";
+            const label = metric === "co2" ? "CO₂" : metric === "temp" ? "Temp" : "RH";
+
+            return (
+                <span key={metric} className="inline-flex items-center gap-1 whitespace-nowrap">
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400">{label}:</span>
+                    <span className="text-[11px] text-gray-500 dark:text-gray-400" title="Predicted next">
+                        {formatPredictedValue(last, decimals)} {unit}
+                    </span>
+                    <span className="hidden sm:inline-flex">
+                        <PredictionSparkline values={series} color={color} decimals={decimals} width={52} height={18}/>
+                    </span>
+                </span>
+            );
+        })
+        .filter(Boolean);
+
+    // If we can't find any usable series, don't show anything.
+    if (blocks.length === 0) return null;
+
+    return <span className="ml-2 mt-1 inline-flex flex-wrap items-center gap-x-3 gap-y-1 align-middle">{blocks}</span>;
 }
 
 function newestFirstSort<T extends { latest: SensorLatest["latest"] }>(rows: T[]): T[] {
@@ -147,6 +236,7 @@ export default function Page() {
     const [sensorLastUpdatedAt, setSensorLastUpdatedAt] = useState<number | null>(null);
 
     const sensorRequestIdRef = useRef(0);
+    const predictionCacheRef = useRef(new Map<string, BranchPrediction | null>());
 
     const loadBranches = useCallback(async () => {
         setLoading(true);
@@ -182,6 +272,32 @@ export default function Page() {
                 const branchItems = (res?.data ?? []) as Branch[];
                 const branchesSafe = Array.isArray(branchItems) ? branchItems : [];
 
+                // 0) Fetch predictions per branch (small fan-out). We keep a cache to avoid duplicated calls.
+                // We refresh predictions whenever we refresh the main data, so the row stays in sync.
+                const shouldRefreshPredictions = reason === "initial" || reason === "event" || reason === "refresh";
+                if (shouldRefreshPredictions) predictionCacheRef.current.clear();
+
+                const predictionsByBranch = await mapWithConcurrencyLimit(branchesSafe, 6, async (b) => {
+                    // Use cached prediction when available.
+                    if (!shouldRefreshPredictions && predictionCacheRef.current.has(b.branch_id)) {
+                        const cached = predictionCacheRef.current.get(b.branch_id) ?? null;
+                        return { branch_id: b.branch_id, prediction: cached };
+                    }
+
+                    try {
+                        const data = await getPrediction(b.branch_id);
+                        const pred = (data as any)?.prediction ?? null;
+                        predictionCacheRef.current.set(b.branch_id, pred);
+                        return { branch_id: b.branch_id, prediction: pred };
+                    } catch {
+                        predictionCacheRef.current.set(b.branch_id, null);
+                        return { branch_id: b.branch_id, prediction: null };
+                    }
+                });
+
+                const predictionMap = new Map<string, BranchPrediction | null>();
+                for (const p of predictionsByBranch) predictionMap.set(p.branch_id, p.prediction);
+
                 // 1) Fetch sensors for each branch (small fan-out)
                 const sensorsByBranch = await mapWithConcurrencyLimit(
                     branchesSafe,
@@ -203,10 +319,20 @@ export default function Page() {
                     try {
                         const data = await getSensorData(sensor.sensor_id, 1);
                         const first = Array.isArray(data?.items) && data.items.length > 0 ? (data.items[0] as any) : null;
-                        return { sensor, branch, latest: first } satisfies SensorLatest;
+                        return {
+                            sensor,
+                            branch,
+                            latest: first,
+                            prediction: predictionMap.get(branch.branch_id) ?? null,
+                        } satisfies SensorLatest;
                     } catch {
                         // One sensor failing shouldn't kill the whole dashboard.
-                        return { sensor, branch, latest: null } satisfies SensorLatest;
+                        return {
+                            sensor,
+                            branch,
+                            latest: null,
+                            prediction: predictionMap.get(branch.branch_id) ?? null,
+                        } satisfies SensorLatest;
                     }
                 });
 
@@ -324,6 +450,17 @@ export default function Page() {
                     }
                     className="border-2"
                 >
+                    {!sensorInitialLoading && sensorLastUpdatedAt ? (
+                        <div
+                            className="mb-3 flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+                            <span>
+                                Last updated: <span
+                                className="font-mono">{new Date(sensorLastUpdatedAt).toLocaleTimeString()}</span>
+                            </span>
+                            {sensorRefreshing ? <span className="font-mono">Refreshing…</span> : null}
+                        </div>
+                    ) : null}
+
                     {!sensorInitialLoading && sensorLatest.length > 0 ? (
                         <div className="overflow-x-auto">
                             <Table className="w-full">
@@ -364,6 +501,8 @@ export default function Page() {
                                             row.latest?.created_at ??
                                             row.latest?.updated_at;
 
+                                        console.log("Rendering row for sensor", row, "with latest timestamp", ts);
+
                                         return (
                                             <TableRow
                                                 key={row.sensor.sensor_id}
@@ -391,7 +530,14 @@ export default function Page() {
                                                 </TableCell>
                                                 <TableCell className="px-3 py-3">
                                                     {row.latest ? (
-                                                        <PrettySensorValue value={row.latest?.value}/>
+                                                        <div className="flex items-center flex-wrap">
+                                                            <PrettySensorValue value={row.latest?.value}/>
+                                                            <CompactPrediction
+                                                                sensor={row.sensor}
+                                                                latestValue={row.latest?.value}
+                                                                prediction={row.prediction}
+                                                            />
+                                                        </div>
                                                     ) : (
                                                         <span className="text-xs text-gray-500 dark:text-gray-400">
                                                             No reading yet

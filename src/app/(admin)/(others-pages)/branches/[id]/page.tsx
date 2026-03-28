@@ -9,6 +9,7 @@ import {
     getBranch,
     getBranchCameras,
     getBranchSensors,
+    getPrediction,
     Sensor,
     updateBranch,
 } from "@/libs/actions";
@@ -24,6 +25,7 @@ import { getCurrentUser } from "@/libs/auth";
 import { isAdminOrSuperadmin } from "@/libs/roles";
 import Badge from "@/components/ui/badge/Badge";
 import { deriveAlertBadge } from "@/libs/branchStatus";
+import PredictionSparkline from "@/components/charts/sparkline/PredictionSparkline";
 
 type Branch = {
     branch_id: string;
@@ -57,6 +59,19 @@ export default function BranchPage() {
     >([]);
     const [camerasLoading, setCamerasLoading] = useState(false);
     const [camerasError, setCamerasError] = useState<string | null>(null);
+
+    const [prediction, setPrediction] = useState<
+        | {
+        model_id: string;
+        model_version: string;
+        horizon: number;
+        step_ahead: number;
+        predictions: Record<"co2" | "temp" | "rh", number[]>;
+    }
+        | null
+    >(null);
+    const [predictionLoading, setPredictionLoading] = useState(false);
+    const [predictionError, setPredictionError] = useState<string | null>(null);
 
     // Add camera modal/state (mirrors create sensor)
     const createCameraModal = useModal(false);
@@ -200,6 +215,35 @@ export default function BranchPage() {
         };
     }, [id]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        async function run() {
+            if (!id) return;
+
+            setPredictionLoading(true);
+            setPredictionError(null);
+            try {
+                const data = await getPrediction(id);
+                if (cancelled) return;
+                setPrediction((data as any)?.prediction ?? null);
+            } catch (e) {
+                if (cancelled) return;
+                const msg = e instanceof Error ? e.message : "Failed to load prediction.";
+                setPredictionError(msg);
+                setPrediction(null);
+            } finally {
+                if (!cancelled) setPredictionLoading(false);
+            }
+        }
+
+        run();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
     async function refreshSensors() {
         if (!id) return;
         setSensorsLoading(true);
@@ -229,6 +273,22 @@ export default function BranchPage() {
             setCameras([]);
         } finally {
             setCamerasLoading(false);
+        }
+    }
+
+    async function refreshPrediction() {
+        if (!id) return;
+        setPredictionLoading(true);
+        setPredictionError(null);
+        try {
+            const data = await getPrediction(id);
+            setPrediction((data as any)?.prediction ?? null);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to load prediction.";
+            setPredictionError(msg);
+            setPrediction(null);
+        } finally {
+            setPredictionLoading(false);
         }
     }
 
@@ -559,11 +619,121 @@ export default function BranchPage() {
 
                 <div className="mt-6 space-y-6">
                     <ComponentCard
+                        title="Prediction"
+                        desc={predictionLoading ? "Loading prediction…" : ""}
+                    >
+                        {predictionError ? (
+                            <div
+                                className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                                {predictionError}
+                            </div>
+                        ) : null}
+
+                        {!predictionLoading && !predictionError && !prediction ? (
+                            <div className="text-sm text-gray-500 dark:text-gray-400">
+                                No prediction available for this branch.
+                            </div>
+                        ) : null}
+
+                        {!predictionLoading && !predictionError && prediction ? (
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div
+                                        className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">Model</div>
+                                        <div className="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
+                                            {prediction.model_id}
+                                        </div>
+                                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                            Version: <span className="font-mono">{prediction.model_version}</span>
+                                        </div>
+                                    </div>
+                                    <div
+                                        className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+                                        <div className="text-xs text-gray-500 dark:text-gray-400">Window</div>
+                                        <div className="mt-1 text-sm text-gray-800 dark:text-white/90">
+                                            Next {prediction.horizon} minutes, step ahead {prediction.step_ahead} minute
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {(() => {
+                                    const pred = prediction.predictions;
+
+                                    const co2Vals: number[] | undefined = Array.isArray(pred?.co2)
+                                        ? pred.co2
+                                        : undefined;
+                                    const tempVals: number[] | undefined = Array.isArray(pred?.temp)
+                                        ? pred.temp
+                                        : undefined;
+                                    const rhVals: number[] | undefined = Array.isArray(pred?.rh)
+                                        ? pred.rh
+                                        : undefined;
+
+                                    const co2 = co2Vals?.at(-1);
+                                    const temp = tempVals?.at(-1);
+                                    const rh = rhVals?.at(-1);
+
+                                    const fmt = (v: unknown) =>
+                                        typeof v === "number" && Number.isFinite(v) ? v.toFixed(2) : "—";
+
+                                    return (
+                                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                            <div
+                                                className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">Next CO₂</div>
+                                                <div className="mt-1 flex items-center justify-between gap-3">
+                                                    <div
+                                                        className="text-lg font-semibold text-gray-800 dark:text-white/90">
+                                                        {fmt(co2)} <span
+                                                        className="text-xs text-gray-500 dark:text-gray-400">ppm</span>
+                                                    </div>
+                                                    <PredictionSparkline values={co2Vals} color="#F97316" decimals={0}/>
+                                                </div>
+                                            </div>
+                                            <div
+                                                className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">Next Temp
+                                                </div>
+                                                <div className="mt-1 flex items-center justify-between gap-3">
+                                                    <div
+                                                        className="text-lg font-semibold text-gray-800 dark:text-white/90">
+                                                        {fmt(temp)} <span
+                                                        className="text-xs text-gray-500 dark:text-gray-400">°C</span>
+                                                    </div>
+                                                    <PredictionSparkline values={tempVals} color="#465FFF"
+                                                                         decimals={1}/>
+                                                </div>
+                                            </div>
+                                            <div
+                                                className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">Next RH</div>
+                                                <div className="mt-1 flex items-center justify-between gap-3">
+                                                    <div
+                                                        className="text-lg font-semibold text-gray-800 dark:text-white/90">
+                                                        {fmt(rh)} <span
+                                                        className="text-xs text-gray-500 dark:text-gray-400">%</span>
+                                                    </div>
+                                                    <PredictionSparkline values={rhVals} color="#22C55E" decimals={1}/>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
+
+                                <div className="flex items-center justify-end">
+                                    <Button size="sm" variant="outline" onClick={refreshPrediction}
+                                            disabled={predictionLoading}>
+                                        {predictionLoading ? "Refreshing..." : "Refresh"}
+                                    </Button>
+                                </div>
+                            </div>
+                        ) : null}
+                    </ComponentCard>
+
+                    <ComponentCard
                         title={cameras.length === 1 ? "Camera" : "Cameras"}
-                        desc={
-                            camerasLoading
-                                ? "Loading cameras…" : ""
-                        }
+                        desc={camerasLoading ? "Loading cameras…" : ""}
                     >
                         {camerasError ? (
                             <div

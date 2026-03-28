@@ -485,3 +485,28 @@ export async function resetCameraSecret(cameraId: string): Promise<{
         });
     });
 }
+
+export async function getPrediction(branch_id: string): Promise<{
+    prediction: {
+        model_id: string;
+        model_version: string;
+        horizon: number;  // number of minutes the prediction covers into the future
+        step_ahead: number;
+        predictions: Record<"co2" | "temp" | "rh", number[]>;
+    };
+}> {
+    return fetch(`/api/branches/${encodeURIComponent(branch_id)}/predict`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch prediction: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
