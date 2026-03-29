@@ -6,7 +6,7 @@ import Input from "@/components/form/input/InputField";
 import Label from "@/components/form/Label";
 import { Modal } from "@/components/ui/modal";
 import { useModal } from "@/hooks/useModal";
-import { createUser, deleteUser, getUsers, updateUser } from "@/libs/actions";
+import { createUser, deleteUser, getGroups, getUsers, type Group, updateUser } from "@/libs/actions";
 import { useNotification } from "@/components/ui/notification";
 import { type CurrentUser, getCurrentUser } from "@/libs/auth";
 import { isSuperadmin } from "@/libs/roles";
@@ -37,6 +37,11 @@ export default function UsersAdmin() {
     const { notify } = useNotification();
 
     const [me, setMe] = useState<CurrentUser>(null);
+    const [meResolved, setMeResolved] = useState(false);
+
+    const [groups, setGroups] = useState<Group[]>([]);
+    const [groupsLoading, setGroupsLoading] = useState(false);
+    const [groupsError, setGroupsError] = useState<string | null>(null);
 
     const createModal = useModal(false);
     const [newUser, setNewUser] = useState<{ username: string; role: string; password?: string; group_id?: string }>({
@@ -69,12 +74,17 @@ export default function UsersAdmin() {
     }, [users]);
 
     const visibleUsers = useMemo(() => {
+        // Don't render an unfiltered list before we know who "me" is.
+        if (!meResolved) return [];
+
         // Remove the currently logged-in user from the list.
         // We try a few common id shapes to avoid tight-coupling to the auth payload.
-        const myId = asStringOrEmpty((me as any)?.user_id ?? (me as any)?.id ?? (me as any)?.user?.user_id ?? (me as any)?.user?.id);
+        const myId = asStringOrEmpty(
+            (me as any)?.user_id ?? (me as any)?.id ?? (me as any)?.user?.user_id ?? (me as any)?.user?.id,
+        );
         if (!myId) return sortedUsers;
         return sortedUsers.filter((u) => asStringOrEmpty(u.user_id) !== myId);
-    }, [me, sortedUsers]);
+    }, [me, meResolved, sortedUsers]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -102,14 +112,66 @@ export default function UsersAdmin() {
     }, [notify]);
 
     useEffect(() => {
+        let cancelled = false;
         getCurrentUser()
-            .then((u) => setMe(u))
-            .catch((e) => console.error("Failed to fetch current user:", e));
+            .then((u) => {
+                if (cancelled) return;
+                setMe(u);
+            })
+            .catch((e) => console.error("Failed to fetch current user:", e))
+            .finally(() => {
+                if (cancelled) return;
+                setMeResolved(true);
+            });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     useEffect(() => {
         load();
     }, [load]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadGroups() {
+            if (!isMeSuperadmin) return;
+
+            setGroupsLoading(true);
+            setGroupsError(null);
+            try {
+                const items = await getGroups();
+                if (cancelled) return;
+
+                const normalized: Group[] = Array.isArray(items)
+                    ? (items as any[]).map((g: any) => ({
+                        ...g,
+                        group_id: asStringOrEmpty(g?.group_id ?? g?.id),
+                        name: asStringOrEmpty(g?.name) || asStringOrEmpty(g?.group_name) || asStringOrEmpty(g?.title),
+                    }))
+                    : [];
+
+                setGroups(normalized.filter((g) => !!asStringOrEmpty(g.group_id)));
+            } catch (e: any) {
+                if (cancelled) return;
+                const message = e?.message ?? "Failed to load groups";
+                setGroupsError(message);
+                setGroups([]);
+            } finally {
+                if (!cancelled) {
+                    setGroupsLoading(false);
+                }
+            }
+        }
+
+        loadGroups();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isMeSuperadmin]);
 
     const handleCreate = useCallback(
         async (e: React.FormEvent) => {
@@ -120,15 +182,38 @@ export default function UsersAdmin() {
                 notify({ variant: "error", title: "Validation error", message });
                 return;
             }
+
+            if (!asStringOrEmpty(newUser.password).trim()) {
+                const message = "Password is required";
+                setError(message);
+                notify({ variant: "error", title: "Validation error", message });
+                return;
+            }
+
+            const groupId = asStringOrEmpty(newUser.group_id).trim();
+            if (isMeSuperadmin && !groupId) {
+                const message = "Group is required";
+                setError(message);
+                notify({ variant: "error", title: "Validation error", message });
+                return;
+            }
+
+            // If group loading failed, superadmins can't satisfy the requirement safely.
+            if (isMeSuperadmin && !!groupsError) {
+                const message = "Groups failed to load. Please try again before creating a user.";
+                setError(message);
+                notify({ variant: "error", title: "Validation error", message });
+                return;
+            }
+
             setCreating(true);
             setError(null);
             try {
-                const groupId = asStringOrEmpty(newUser.group_id).trim();
                 const payload = {
                     username: newUser.username,
                     role: newUser.role as any,
                     password: newUser.password,
-                    ...(isMeSuperadmin && groupId ? { group_id: groupId } : {}),
+                    ...(isMeSuperadmin ? { group_id: groupId } : {}),
                 };
 
                 await createUser(payload as any);
@@ -144,7 +229,17 @@ export default function UsersAdmin() {
                 setCreating(false);
             }
         },
-        [createModal, isMeSuperadmin, load, newUser.group_id, newUser.password, newUser.role, newUser.username, notify],
+        [
+            createModal,
+            groupsError,
+            isMeSuperadmin,
+            load,
+            newUser.group_id,
+            newUser.password,
+            newUser.role,
+            newUser.username,
+            notify,
+        ],
     );
 
     const openEdit = useCallback(
@@ -155,7 +250,7 @@ export default function UsersAdmin() {
                 role: u.role ?? "user",
                 // password is intentionally blank; only update if user types one
                 password: "",
-                group_id: asStringOrEmpty((u as any).group_id),
+                group_id: asStringOrEmpty((u as any).group_id) || "",
             });
             editModal.openModal();
         },
@@ -236,7 +331,7 @@ export default function UsersAdmin() {
 
             {/* Errors are surfaced via notifications; keep state for potential future inline UX. */}
 
-            {loading ? (
+            {loading || !meResolved ? (
                 <div className="text-sm text-gray-500 dark:text-gray-400">Loading…</div>
             ) : (
                 <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
@@ -330,14 +425,46 @@ export default function UsersAdmin() {
 
                         {isMeSuperadmin && (
                             <div>
-                                <Label htmlFor="group_id">Group ID</Label>
-                                <Input
+                                <Label htmlFor="group_id">Group</Label>
+                                <select
                                     id="group_id"
                                     name="group_id"
-                                    type="text"
                                     value={asStringOrEmpty(newUser.group_id)}
                                     onChange={(e) => setNewUser((p) => ({ ...p, group_id: e.target.value }))}
-                                />
+                                    disabled={groupsLoading}
+                                    required
+                                    className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-brand-500 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+                                >
+                                    <option value="" disabled>
+                                        Select a group…
+                                    </option>
+
+                                    {/* If the current group_id isn't in the list (deleted/missing), preserve it visibly. */}
+                                    {asStringOrEmpty(newUser.group_id) !== "" &&
+                                        !groups.some(
+                                            (g) => asStringOrEmpty(g.group_id) === asStringOrEmpty(newUser.group_id),
+                                        ) && (
+                                            <option value={asStringOrEmpty(newUser.group_id)}>
+                                                {`Unknown (${asStringOrEmpty(newUser.group_id)})`}
+                                            </option>
+                                        )}
+
+                                    {groups.map((g) => (
+                                        <option key={asStringOrEmpty(g.group_id)} value={asStringOrEmpty(g.group_id)}>
+                                            {asStringOrEmpty(g.name) || asStringOrEmpty(g.group_id)}
+                                        </option>
+                                    ))}
+                                </select>
+                                {groupsLoading && (
+                                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                        Loading groups…
+                                    </div>
+                                )}
+                                {groupsError && (
+                                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                        Couldn’t load groups. Please refresh and try again.
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -347,6 +474,7 @@ export default function UsersAdmin() {
                                 id="password"
                                 name="password"
                                 type="password"
+                                required
                                 value={newUser.password ?? ""}
                                 onChange={(e) => setNewUser((p) => ({ ...p, password: e.target.value }))}
                             />
@@ -389,21 +517,44 @@ export default function UsersAdmin() {
                                 onChange={(e) => setEditDraft((p) => ({ ...p, role: e.target.value }))}
                                 className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
                             >
-                                <option value="User">User</option>
-                                <option value="Admin">Admin</option>
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
                             </select>
                         </div>
 
                         {isMeSuperadmin && (
                             <div>
-                                <Label htmlFor="edit-group_id">Group ID</Label>
-                                <Input
+                                <Label htmlFor="edit-group_id">Group</Label>
+                                <select
                                     id="edit-group_id"
                                     name="group_id"
-                                    type="text"
                                     value={asStringOrEmpty(editDraft.group_id)}
                                     onChange={(e) => setEditDraft((p) => ({ ...p, group_id: e.target.value }))}
-                                />
+                                    disabled={groupsLoading}
+                                    className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-brand-500 disabled:opacity-60 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
+                                >
+                                    {/* If the current group_id isn't in the list (deleted/missing), preserve it visibly. */}
+                                    {asStringOrEmpty(editDraft.group_id) !== "" &&
+                                        !groups.some((g) => asStringOrEmpty(g.group_id) === asStringOrEmpty(editDraft.group_id)) && (
+                                            <option value={asStringOrEmpty(editDraft.group_id)}>
+                                                {`Unknown (${asStringOrEmpty(editDraft.group_id)})`}
+                                            </option>
+                                        )}
+
+                                    {groups.map((g) => (
+                                        <option key={asStringOrEmpty(g.group_id)} value={asStringOrEmpty(g.group_id)}>
+                                            {asStringOrEmpty(g.name) || asStringOrEmpty(g.group_id)}
+                                        </option>
+                                    ))}
+                                </select>
+                                {groupsLoading && (
+                                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">Loading groups…</div>
+                                )}
+                                {groupsError && (
+                                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                        Couldn’t load groups. You can still edit other fields.
+                                    </div>
+                                )}
                             </div>
                         )}
 

@@ -8,6 +8,7 @@ import { EyeCloseIcon, EyeIcon } from "@/icons";
 import Link from "next/link";
 import React, { useState } from "react";
 import { useNotification } from "@/components/ui/notification";
+import { getDefaultLandingPath } from "@/libs/landing";
 
 type LoginResult = { ok: true } | { ok: false; error: string };
 
@@ -51,7 +52,12 @@ export default function SignInForm() {
                                 const data = (await res.json().catch(() => null)) as LoginResult | null;
 
                                 if (res.ok && data?.ok) {
-                                    window.location.href = "/";
+                                    // Decide landing page based on user role.
+                                    const meRes = await fetch("/api/user", { method: "GET" }).catch(() => null);
+                                    const meJson = meRes && meRes.ok ? await meRes.json().catch(() => null) : null;
+                                    const currentUser = meJson?.data ?? null;
+
+                                    window.location.href = getDefaultLandingPath(currentUser);
                                     return;
                                 }
 

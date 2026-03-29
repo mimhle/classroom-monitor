@@ -1,5 +1,5 @@
 "use client";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useModal } from "@/hooks/useModal";
 import { Modal } from "../ui/modal";
 import Button from "../ui/button/Button";
@@ -7,7 +7,7 @@ import Input from "../form/input/InputField";
 import Label from "../form/Label";
 import { KeyIcon, PencilIcon } from "@/icons";
 import { useNotification } from "@/components/ui/notification";
-import { updateUser } from "@/libs/actions";
+import { getGroup, type Group, updateUser } from "@/libs/actions";
 
 export default function UserInfoCard({ user }: { user: any }) {
     const { notify } = useNotification();
@@ -119,11 +119,57 @@ export default function UserInfoCard({ user }: { user: any }) {
         [closeModalPassword, notify, pwdDraft.confirmPassword, pwdDraft.newPassword, userId],
     );
 
+    const groupId = useMemo(() => {
+        return (user as any)?.group_id ?? (user as any)?.groupId ?? (user as any)?.group?.group_id;
+    }, [user]);
+
+    const [currentGroup, setCurrentGroup] = useState<Group | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function load() {
+            if (!groupId) {
+                setCurrentGroup(null);
+                return;
+            }
+
+            // If the user object already contains group details, prefer them.
+            const embedded = (user as any)?.group;
+            if (embedded && (embedded.group_id || embedded.id) && embedded.name) {
+                setCurrentGroup({
+                    group_id: embedded.group_id ?? embedded.id,
+                    name: embedded.name,
+                    created_at: embedded.created_at ?? "",
+                });
+                return;
+            }
+
+            try {
+                const g = await getGroup(String(groupId));
+                if (!cancelled) setCurrentGroup(g);
+            } catch {
+                if (!cancelled) setCurrentGroup(null);
+            }
+        }
+
+        load();
+        return () => {
+            cancelled = true;
+        };
+    }, [groupId, user]);
+
+    const groupLabel = useMemo(() => {
+        if (currentGroup?.name) return currentGroup.name;
+        if (groupId) return String(groupId);
+        return "—";
+    }, [currentGroup?.name, groupId]);
+
     return (
         <div className="p-5 border border-gray-200 rounded-2xl dark:border-gray-800 lg:p-6">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                 <div>
-                    <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90 lg:mb-6">Personal
+                    <h4 className="text-lg font-semibold text-gray-800 dark:text-white/90 lg:mb-6">User
                         Information</h4>
 
                     <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:gap-7 2xl:gap-x-32">
@@ -135,6 +181,11 @@ export default function UserInfoCard({ user }: { user: any }) {
                         <div>
                             <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">Role</p>
                             <p className="text-sm font-medium text-gray-800 dark:text-white/90">{user.role}</p>
+                        </div>
+
+                        <div>
+                            <p className="mb-2 text-xs leading-normal text-gray-500 dark:text-gray-400">Group</p>
+                            <p className="text-sm font-medium text-gray-800 dark:text-white/90">{groupLabel}</p>
                         </div>
                     </div>
                 </div>

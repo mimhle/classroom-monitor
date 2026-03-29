@@ -85,6 +85,8 @@ export async function requireAuth(opts?: { redirectTo?: string }) {
 export async function requireRole(role: string | string[], opts?: { redirectTo?: string }) {
     const user = await requireAuth(opts);
 
+    console.log("requireRole: user role is", user);
+
     const allowed = Array.isArray(role) ? role : [role];
     const userRole = normalizeRole((user as any)?.role);
 

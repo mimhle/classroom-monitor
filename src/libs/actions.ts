@@ -2,10 +2,22 @@
 
 import { emitBranchesChanged } from "@/libs/branchEvents";
 
+export type SensorField = "co2" | "temp" | "rh" | "vbat" | "lux" | "mic" | "pm2_5" | "pm10";
+
+export type SensorThresholds = {
+    min: number;
+    max: number;
+    activated: boolean;
+};
+
 export type Branch = {
     branch_id: string;
     group_id?: string;
     name: string;
+    thresholds: {
+        activate: boolean;
+        sensors: Record<SensorField, SensorThresholds>;
+    }
 };
 
 export type Camera = {
@@ -31,6 +43,10 @@ export async function getBranches() {
 export type CreateBranchInput = {
     name: string;
     group_id?: string;
+    thresholds?: {
+        activate: boolean;
+        sensors: Record<SensorField, SensorThresholds>;
+    };
 };
 
 export async function createBranch(input: CreateBranchInput) {
@@ -67,6 +83,17 @@ export async function getBranch(id: string): Promise<Branch> {
             );
         }
         return res.json().then((data) => {
+            if ("thresholds" in data.data && typeof data.data.thresholds === "string") {
+                try {
+                    data.data.thresholds = JSON.parse(data.data.thresholds);
+                } catch (e) {
+                    console.warn("Failed to parse thresholds for branch", id, data.data.thresholds, e);
+                    data.data.thresholds = {
+                        activate: false,
+                        sensors: {},
+                    };
+                }
+            }
             return data.data;
         });
     });
@@ -639,6 +666,106 @@ export async function getPrediction(branch_id: string): Promise<{
         }
         return res.json().then((data) => {
             return data.data;
+        });
+    });
+}
+
+export type Group = {
+    group_id: string;
+    name: string;
+    created_at: string;
+};
+
+export async function getGroups(): Promise<Group[]> {
+    return fetch(`/api/groups`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch groups: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Group[];
+        });
+    });
+}
+
+export async function getGroup(id: string): Promise<Group> {
+    return fetch(`/api/groups/${encodeURIComponent(id)}`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch group: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Group;
+        });
+    });
+}
+
+export type CreateGroupInput = {
+    name: string;
+};
+
+export async function createGroup(input: CreateGroupInput): Promise<Group> {
+    return fetch(`/api/groups`, {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to create group: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Group;
+        });
+    });
+}
+
+export async function deleteGroup(id: string) {
+    return fetch(`/api/groups/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to delete group: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+    });
+}
+
+export async function updateGroup(id: string, input: CreateGroupInput): Promise<Group> {
+    return fetch(`/api/groups/${encodeURIComponent(id)}`, {
+        method: "PUT",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to update group: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Group;
         });
     });
 }

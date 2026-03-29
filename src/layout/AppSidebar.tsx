@@ -4,11 +4,19 @@ import Link from "next/link";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
-import { ChevronDownIcon, GridIcon, PlusIcon, UserCircleIcon, UserMultipleIcon, VectorNodesIcon } from "../icons/index";
+import {
+    ChevronDownIcon,
+    GridIcon,
+    PlusIcon,
+    UserCircleIcon,
+    UserMultiple2Icon,
+    UserMultipleIcon,
+    VectorNodesIcon
+} from "../icons/index";
 import { type Branch, createBranch, getBranches } from "@/libs/actions";
 import { onBranchesChanged } from "@/libs/branchEvents";
 import { type CurrentUser, getCurrentUser } from "@/libs/auth";
-import { isAdminOrSuperadmin } from "@/libs/roles";
+import { isAdminOrSuperadmin, isSuperadmin } from "@/libs/roles";
 import Button from "@/components/ui/button/Button";
 import { Modal } from "@/components/ui/modal";
 import Label from "@/components/form/Label";
@@ -41,6 +49,11 @@ const navItemStatic: NavItem[] = [
         path: "/users",
     },
     {
+        icon: <UserMultiple2Icon/>,
+        name: "Manage groups",
+        path: "/groups",
+    },
+    {
         icon: <UserCircleIcon/>,
         name: "User Profile",
         path: "/profile",
@@ -49,9 +62,11 @@ const navItemStatic: NavItem[] = [
 
 const LAST_BRANCH_STORAGE_KEY = "classroom-monitor:last-branch-id";
 
-const AppSidebar: React.FC = () => {
+type AppSidebarProps = { initialUser?: CurrentUser };
+
+const AppSidebar: React.FC<AppSidebarProps> = ({ initialUser }) => {
     const [navItems, setNavItems] = useState<Branch[]>([]);
-    const [currentUser, setCurrentUser] = useState<CurrentUser>(null);
+    const [currentUser, setCurrentUser] = useState<CurrentUser>(initialUser ?? null);
     const { isExpanded, isMobileOpen, isHovered, setIsHovered } = useSidebar();
     const pathname = usePathname();
     const router = useRouter();
@@ -82,6 +97,7 @@ const AppSidebar: React.FC = () => {
     }, [loadBranches]);
 
     useEffect(() => {
+        if (initialUser) return;
         getCurrentUser()
             .then((user) => setCurrentUser(user))
             .catch((e) => {
@@ -89,7 +105,7 @@ const AppSidebar: React.FC = () => {
                 console.error("Failed to fetch current user:", e);
                 setCurrentUser(null);
             });
-    }, []);
+    }, [initialUser]);
 
     const closeCreateBranchModal = useCallback(() => {
         createBranchModal.closeModal();
@@ -292,37 +308,50 @@ const AppSidebar: React.FC = () => {
 
     const staticNavItems = useMemo((): NavItem[] => {
         const isAdmin = isAdminOrSuperadmin(currentUser);
+        const isSA = isSuperadmin(currentUser);
         return navItemStatic.filter((item) => {
+            // Superadmins shouldn't see the regular dashboard entry.
+            if (item.path === "/") return !isSA;
             if (item.path === "/users") return isAdmin;
+            if (item.path === "/groups") return isSA;
             return true;
         });
+    }, [currentUser]);
+
+    const showBranches = useMemo(() => {
+        // Hide branches tab for superadmin.
+        return !isSuperadmin(currentUser);
     }, [currentUser]);
 
     const menuItems: NavItem[] = useMemo(() => {
         const isAdmin = isAdminOrSuperadmin(currentUser);
         return [
             ...staticNavItems.slice(0, 1),
-            {
-                icon: <VectorNodesIcon/>,
-                name: "Branches",
-                subItems: [
-                    ...navItems.map((branch) => ({
-                        name: branch.name,
-                        path: `/branches/${branch.branch_id}`,
-                    })),
-                    ...(isAdmin
-                        ? [
-                            {
-                                name: "New branch",
-                                onclick: openCreateBranchModal,
-                            },
-                        ]
-                        : []),
-                ],
-            },
+            ...(showBranches
+                ? [
+                    {
+                        icon: <VectorNodesIcon/>,
+                        name: "Branches",
+                        subItems: [
+                            ...navItems.map((branch) => ({
+                                name: branch.name,
+                                path: `/branches/${branch.branch_id}`,
+                            })),
+                            ...(isAdmin
+                                ? [
+                                    {
+                                        name: "New branch",
+                                        onclick: openCreateBranchModal,
+                                    },
+                                ]
+                                : []),
+                        ],
+                    } as NavItem,
+                ]
+                : []),
             ...staticNavItems.slice(1),
         ];
-    }, [currentUser, openCreateBranchModal, navItems, staticNavItems]);
+    }, [currentUser, openCreateBranchModal, navItems, staticNavItems, showBranches]);
 
     const keepBranchSelectionSubmenu: { type: "main" | "others"; index: number } | null = useMemo(() => {
         let bestMatch: { type: "main" | "others"; index: number } | null = null;
@@ -436,24 +465,28 @@ const AppSidebar: React.FC = () => {
                             <div>
                                 {renderMenuItems([
                                     ...staticNavItems.slice(0, 1),
-                                    {
-                                        icon: <VectorNodesIcon/>,
-                                        name: "Branches",
-                                        subItems: [
-                                            ...navItems.map((branch) => ({
-                                                name: branch.name,
-                                                path: `/branches/${branch.branch_id}`,
-                                            })),
-                                            ...(isAdminOrSuperadmin(currentUser)
-                                                ? [
-                                                    {
-                                                        name: "New branch",
-                                                        onclick: openCreateBranchModal,
-                                                    },
-                                                ]
-                                                : []),
-                                        ],
-                                    },
+                                    ...(showBranches
+                                        ? [
+                                            {
+                                                icon: <VectorNodesIcon/>,
+                                                name: "Branches",
+                                                subItems: [
+                                                    ...navItems.map((branch) => ({
+                                                        name: branch.name,
+                                                        path: `/branches/${branch.branch_id}`,
+                                                    })),
+                                                    ...(isAdminOrSuperadmin(currentUser)
+                                                        ? [
+                                                            {
+                                                                name: "New branch",
+                                                                onclick: openCreateBranchModal,
+                                                            },
+                                                        ]
+                                                        : []),
+                                                ],
+                                            },
+                                        ]
+                                        : []),
                                     ...staticNavItems.slice(1),
                                 ], "main")}
                             </div>

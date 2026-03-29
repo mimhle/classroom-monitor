@@ -34,6 +34,7 @@ import Badge from "@/components/ui/badge/Badge";
 import { deriveAlertBadge } from "@/libs/branchStatus";
 import PredictionSparkline from "@/components/charts/sparkline/PredictionSparkline";
 import SensorStatusBadge from "@/components/common/SensorStatusBadge";
+import BranchThresholdsEditor, { type BranchThresholds } from "@/components/branches/BranchThresholdsEditor";
 
 export default function BranchDetailsPage() {
     const params = useParams<{ id: string }>();
@@ -108,6 +109,10 @@ export default function BranchDetailsPage() {
     const disableAddSensor = useMemo(() => {
         return canEdit && hasSensors;
     }, [canEdit, hasSensors]);
+
+    const [thresholdsDraft, setThresholdsDraft] = useState<BranchThresholds | null>(null);
+    const [thresholdsDirty, setThresholdsDirty] = useState(false);
+    const [thresholdsSaving, setThresholdsSaving] = useState(false);
 
     useEffect(() => {
         let cancelled = false;
@@ -688,6 +693,59 @@ export default function BranchDetailsPage() {
         }
     }
 
+    useEffect(() => {
+        if (!branch) return;
+        // Sync draft when branch loads/changes.
+        const t = (branch as any)?.thresholds as BranchThresholds | undefined;
+        if (t && typeof t === "object") {
+            setThresholdsDraft(t);
+        } else {
+            setThresholdsDraft({ activate: false, sensors: {} as any });
+        }
+        setThresholdsDirty(false);
+    }, [branch?.branch_id]);
+
+    async function onSaveThresholds() {
+        if (!canEdit) return;
+        if (!id || !branch) {
+            notify({ variant: "error", title: "Save failed", message: "Missing branch id." });
+            return;
+        }
+        const group_id = editUserGroupId ?? branch.group_id;
+        if (!group_id) {
+            notify({ variant: "error", title: "Save failed", message: "Missing group id for this user." });
+            return;
+        }
+        if (!thresholdsDraft) {
+            notify({ variant: "error", title: "Save failed", message: "Nothing to save." });
+            return;
+        }
+
+        setThresholdsSaving(true);
+        try {
+            const updated = (await updateBranch(id, {
+                name: branch.name,
+                group_id,
+                thresholds: thresholdsDraft,
+            })) as Branch | null;
+
+            setBranch((prev) => (prev ? { ...prev, ...(updated ?? {}), thresholds: thresholdsDraft } : prev));
+            setThresholdsDirty(false);
+
+            // Popup message (same pattern used throughout the app).
+            notify({
+                variant: "success",
+                title: "Saved",
+                message: "Sensor thresholds saved successfully.",
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to update thresholds.";
+            notify({ variant: "error", title: "Save failed", message });
+        } finally {
+            setThresholdsSaving(false);
+        }
+    }
+
     if (loading) {
         return (
             <div className="p-4 sm:p-6 lg:p-8">
@@ -1010,6 +1068,53 @@ export default function BranchDetailsPage() {
                                 })()}
                             </div>
                         ) : null}
+                    </ComponentCard>
+
+                    <ComponentCard
+                        title="Sensor thresholds"
+                        desc={!canEdit ? "You don’t have permission to edit thresholds." : ""}
+                    >
+                        <BranchThresholdsEditor
+                            value={
+                                (thresholdsDraft as any) ??
+                                ((branch as any)?.thresholds as any) ??
+                                ({ activate: false, sensors: {} } as any)
+                            }
+                            disabled={!canEdit || thresholdsSaving}
+                            onChangeAction={(next) => {
+                                setThresholdsDraft(next);
+                                setThresholdsDirty(true);
+                            }}
+                            actions={
+                                canEdit ? (
+                                    <div className="flex items-center justify-end gap-3">
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => {
+                                                const t = (branch as any)?.thresholds as BranchThresholds | undefined;
+                                                setThresholdsDraft(
+                                                    t && typeof t === "object"
+                                                        ? t
+                                                        : ({ activate: false, sensors: {} } as any),
+                                                );
+                                                setThresholdsDirty(false);
+                                            }}
+                                            disabled={thresholdsSaving || !thresholdsDirty}
+                                        >
+                                            Reset
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            onClick={onSaveThresholds}
+                                            disabled={thresholdsSaving || !thresholdsDirty}
+                                        >
+                                            {thresholdsSaving ? "Saving..." : "Save thresholds"}
+                                        </Button>
+                                    </div>
+                                ) : null
+                            }
+                        />
                     </ComponentCard>
 
                     <ComponentCard
