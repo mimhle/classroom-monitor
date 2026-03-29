@@ -1,14 +1,5 @@
 import { tryParseJson } from "@/libs/sensorValue";
-
-export type PredictionMetric = "co2" | "temp" | "rh";
-
-export type BranchPrediction = {
-    model_id: string;
-    model_version: string;
-    horizon: number;
-    step_ahead: number;
-    predictions: Record<PredictionMetric, number[]>;
-};
+import { BranchPrediction, PredictionMetric } from "@/libs/actions";
 
 function normalizeKey(k: string) {
     return k.trim().toLowerCase();

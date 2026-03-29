@@ -5,27 +5,27 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ComponentCard from "@/components/common/ComponentCard";
 import Badge from "@/components/ui/badge/Badge";
+import SensorStatusBadge from "@/components/common/SensorStatusBadge";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
-import { getBranches, getBranchSensors, getPrediction, getSensorData, type Sensor } from "@/libs/actions";
+import {
+    type Branch,
+    BranchPrediction,
+    type Camera,
+    getBranchCameras,
+    getBranches,
+    getBranchSensors,
+    getCameraStatus,
+    getPrediction,
+    getSensorData,
+    PredictionMetric,
+    type Sensor,
+} from "@/libs/actions";
 import { onBranchesChanged } from "@/libs/branchEvents";
 import { deriveAlertBadge } from "@/libs/branchStatus";
 import { parseSensorValue } from "@/libs/sensorValue";
 import { formatLocalDateTime, toEpochMs } from "@/app/(admin)/(others-pages)/sensors/[id]/page";
 import PredictionSparkline from "@/components/charts/sparkline/PredictionSparkline";
-import {
-    type BranchPrediction,
-    formatPredictedValue,
-    getPredictionSeries,
-    inferPredictionMetricFromSensor,
-    type PredictionMetric,
-} from "@/libs/predictionCompact";
-
-type Branch = {
-    branch_id: string;
-    group_id?: string;
-    name: string;
-    alert?: unknown;
-};
+import { formatPredictedValue, getPredictionSeries, inferPredictionMetricFromSensor, } from "@/libs/predictionCompact";
 
 type SensorLatest = {
     sensor: Sensor;
@@ -91,7 +91,7 @@ function buildValuePreview(parsed: ReturnType<typeof parseSensorValue>): ParsedV
             if (ra !== rb) return ra - rb;
             return normalizeKey(a).localeCompare(normalizeKey(b));
         })
-        .slice(0, 4)
+        .slice(0, 3)
         .map(([k, v]) => ({ k, v: clampText(formatCellValue(v), 60) }));
 
     // If everything got filtered (edge case), fall back to including `value`.
@@ -235,6 +235,9 @@ export default function Page() {
     const [sensorError, setSensorError] = useState<string | null>(null);
     const [sensorLastUpdatedAt, setSensorLastUpdatedAt] = useState<number | null>(null);
 
+    const [camerasByBranchId, setCamerasByBranchId] = useState<Record<string, Camera[]>>({});
+    const [cameraStatuses, setCameraStatuses] = useState<Record<string, "online" | "offline" | "unknown">>({});
+
     const sensorRequestIdRef = useRef(0);
     const predictionCacheRef = useRef(new Map<string, BranchPrediction | null>());
 
@@ -271,6 +274,24 @@ export default function Page() {
                 const res = (await getBranches()) as any;
                 const branchItems = (res?.data ?? []) as Branch[];
                 const branchesSafe = Array.isArray(branchItems) ? branchItems : [];
+
+                // Fetch cameras for each branch (small fan-out)
+                const camerasByBranch = await mapWithConcurrencyLimit(branchesSafe, 6, async (b) => {
+                    try {
+                        const data = await getBranchCameras(b.branch_id);
+                        const items = Array.isArray(data?.items) ? (data.items as Camera[]) : [];
+                        return [b.branch_id, items] as const;
+                    } catch {
+                        return [b.branch_id, [] as Camera[]] as const;
+                    }
+                });
+
+                if (sensorRequestIdRef.current !== requestId) return;
+                setCamerasByBranchId((prev) => {
+                    const next = { ...prev };
+                    for (const [branchId, cams] of camerasByBranch) next[branchId] = cams;
+                    return next;
+                });
 
                 // 0) Fetch predictions per branch (small fan-out). We keep a cache to avoid duplicated calls.
                 // We refresh predictions whenever we refresh the main data, so the row stays in sync.
@@ -425,6 +446,70 @@ export default function Page() {
         };
     }, [loadAllSensorLatest]);
 
+    // After cameras are loaded, fetch their statuses once, and poll periodically (pause when tab is hidden).
+    useEffect(() => {
+        const cameraIds = Array.from(
+            new Set(
+                Object.values(camerasByBranchId)
+                    .flat()
+                    .map((c) => c.camera_id),
+            ),
+        );
+
+        if (cameraIds.length === 0) {
+            setCameraStatuses({});
+            return;
+        }
+
+        let cancelled = false;
+
+        async function refreshCameraStatuses() {
+            const concurrency = 6;
+            const next: Record<string, "online" | "offline" | "unknown"> = {};
+
+            for (let i = 0; i < cameraIds.length; i += concurrency) {
+                const chunk = cameraIds.slice(i, i + concurrency);
+                const results = await Promise.all(
+                    chunk.map(async (cameraId) => {
+                        try {
+                            const res = await getCameraStatus(cameraId);
+                            return [cameraId, res.status] as const;
+                        } catch {
+                            return [cameraId, "unknown"] as const;
+                        }
+                    }),
+                );
+
+                for (const [cameraId, status] of results) next[cameraId] = status;
+            }
+
+            if (!cancelled) setCameraStatuses((prev) => ({ ...prev, ...next }));
+        }
+
+        // initial fetch
+        void refreshCameraStatuses();
+
+        const interval = window.setInterval(() => {
+            if (cancelled) return;
+            if (document.visibilityState === "hidden") return;
+            void refreshCameraStatuses();
+        }, 15000);
+
+        function onVisibilityChange() {
+            if (document.visibilityState === "visible") {
+                void refreshCameraStatuses();
+            }
+        }
+
+        document.addEventListener("visibilitychange", onVisibilityChange);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+        };
+    }, [camerasByBranchId]);
+
     return (
         <div className="p-4 sm:p-6 lg:p-8">
             <div className="mx-auto w-full max-w-5xl space-y-6">
@@ -476,7 +561,7 @@ export default function Page() {
                                             isHeader
                                             className="px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400"
                                         >
-                                            Sensor
+                                            Devices
                                         </TableCell>
                                         <TableCell
                                             isHeader
@@ -501,7 +586,7 @@ export default function Page() {
                                             row.latest?.created_at ??
                                             row.latest?.updated_at;
 
-                                        console.log("Rendering row for sensor", row, "with latest timestamp", ts);
+                                        const branchCameras = camerasByBranchId[row.branch.branch_id] ?? [];
 
                                         return (
                                             <TableRow
@@ -521,12 +606,39 @@ export default function Page() {
                                                         href={`/sensors/${encodeURIComponent(row.sensor.sensor_id)}`}
                                                         className="text-sm font-medium text-gray-800 hover:underline dark:text-white/90"
                                                     >
-                                                        {row.sensor.name}
+                                                        {row.sensor.name}&nbsp;&nbsp;&nbsp;
+                                                        <SensorStatusBadge status={(row.sensor as any)?.status}/>
                                                     </Link>
                                                     <div
                                                         className="mt-1 font-mono text-[11px] text-gray-500 dark:text-gray-400">
                                                         {row.sensor.sensor_id}
                                                     </div>
+
+                                                    {branchCameras.length > 0 ? (
+                                                        <div className="mt-2 space-y-1">
+                                                            <div className="flex flex-col gap-1">
+                                                                {branchCameras.map((c) => (
+                                                                    <div
+                                                                        key={c.camera_id}
+                                                                        className="flex flex-wrap items-center gap-x-2 gap-y-1"
+                                                                    >
+                                                                        <Link
+                                                                            href={`/cameras/${encodeURIComponent(c.camera_id)}`}
+                                                                            className="text-sm font-medium text-gray-800 hover:underline dark:text-white/90"
+                                                                        >
+                                                                            {c.name}&nbsp;&nbsp;&nbsp;
+                                                                            <SensorStatusBadge
+                                                                                status={cameraStatuses[c.camera_id] ?? "unknown"}/>
+                                                                        </Link>
+                                                                        <span
+                                                                            className="font-mono text-[11px] text-gray-500 dark:text-gray-400">
+                                                                            {c.camera_id}
+                                                                        </span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    ) : null}
                                                 </TableCell>
                                                 <TableCell className="px-3 py-3">
                                                     {row.latest ? (
@@ -598,7 +710,7 @@ export default function Page() {
 
                                 <TableBody>
                                     {branches.map((b) => {
-                                        const badge = deriveAlertBadge(b.alert);
+                                        const badge = deriveAlertBadge(""); // Placeholder: replace with actual alert data when available.
                                         return (
                                             <TableRow
                                                 key={b.branch_id}

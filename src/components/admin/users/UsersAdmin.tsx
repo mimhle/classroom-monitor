@@ -41,7 +41,7 @@ export default function UsersAdmin() {
     const createModal = useModal(false);
     const [newUser, setNewUser] = useState<{ username: string; role: string; password?: string; group_id?: string }>({
         username: "",
-        role: "User",
+        role: "user",
         password: "",
         group_id: "",
     });
@@ -56,7 +56,7 @@ export default function UsersAdmin() {
         group_id?: string
     }>({
         username: "",
-        role: "User",
+        role: "user",
         password: "",
         group_id: "",
     });
@@ -67,6 +67,14 @@ export default function UsersAdmin() {
     const sortedUsers = useMemo(() => {
         return [...users].sort((a, b) => a.username.localeCompare(b.username));
     }, [users]);
+
+    const visibleUsers = useMemo(() => {
+        // Remove the currently logged-in user from the list.
+        // We try a few common id shapes to avoid tight-coupling to the auth payload.
+        const myId = asStringOrEmpty((me as any)?.user_id ?? (me as any)?.id ?? (me as any)?.user?.user_id ?? (me as any)?.user?.id);
+        if (!myId) return sortedUsers;
+        return sortedUsers.filter((u) => asStringOrEmpty(u.user_id) !== myId);
+    }, [me, sortedUsers]);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -125,7 +133,7 @@ export default function UsersAdmin() {
 
                 await createUser(payload as any);
                 createModal.closeModal();
-                setNewUser({ username: "", role: "User", password: "", group_id: "" });
+                setNewUser({ username: "", role: "user", password: "", group_id: "" });
                 notify({ variant: "success", title: "User created", message: "User was created successfully." });
                 await load();
             } catch (e: any) {
@@ -144,7 +152,7 @@ export default function UsersAdmin() {
             setEditingUser(u);
             setEditDraft({
                 username: u.username ?? "",
-                role: u.role ?? "User",
+                role: u.role ?? "user",
                 // password is intentionally blank; only update if user types one
                 password: "",
                 group_id: asStringOrEmpty((u as any).group_id),
@@ -185,7 +193,7 @@ export default function UsersAdmin() {
 
                 editModal.closeModal();
                 setEditingUser(null);
-                setEditDraft({ username: "", role: "User", password: "", group_id: "" });
+                setEditDraft({ username: "", role: "user", password: "", group_id: "" });
                 notify({ variant: "success", title: "User updated", message: "User was updated successfully." });
                 await load();
             } catch (e: any) {
@@ -253,7 +261,7 @@ export default function UsersAdmin() {
                         </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-200 dark:divide-gray-800">
-                        {sortedUsers.map((u) => (
+                        {visibleUsers.map((u) => (
                             <tr key={u.user_id} className="bg-white dark:bg-gray-900">
                                 <td className="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">{u.user_id}</td>
                                 <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100">{u.username}</td>
@@ -275,7 +283,7 @@ export default function UsersAdmin() {
                                 </td>
                             </tr>
                         ))}
-                        {sortedUsers.length === 0 && (
+                        {visibleUsers.length === 0 && (
                             <tr>
                                 <td
                                     className="px-4 py-6 text-sm text-gray-500 dark:text-gray-400"
@@ -315,8 +323,8 @@ export default function UsersAdmin() {
                                 onChange={(e) => setNewUser((p) => ({ ...p, role: e.target.value }))}
                                 className="h-11 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm text-gray-900 outline-none transition focus:border-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-100"
                             >
-                                <option value="User">User</option>
-                                <option value="Admin">Admin</option>
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
                             </select>
                         </div>
 

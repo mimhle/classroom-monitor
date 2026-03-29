@@ -10,18 +10,20 @@ import { PencilIcon, TrashBinIcon } from "@/icons";
 import { useNotification } from "@/components/ui/notification";
 import { getCurrentUser } from "@/libs/auth";
 import { isAdminOrSuperadmin } from "@/libs/roles";
-import { deleteCamera, getCamera, getCameraUrl, resetCameraSecret, updateCamera } from "@/libs/actions";
+import {
+    type Camera,
+    deleteCamera,
+    getCamera,
+    getCameraStatus,
+    getCameraUrl,
+    resetCameraSecret,
+    updateCamera,
+} from "@/libs/actions";
 import { Modal } from "@/components/ui/modal";
 import { useModal } from "@/hooks/useModal";
 import Label from "@/components/form/Label";
 import Input from "@/components/form/input/InputField";
-
-type Camera = {
-    camera_id: string;
-    branch_id: string;
-    name: string;
-    updated_at: string;
-};
+import SensorStatusBadge from "@/components/common/SensorStatusBadge";
 
 type CameraUrlResponse = {
     access_token?: string;
@@ -55,6 +57,8 @@ export default function CameraPage() {
 
     const cameraSecretModal = useModal(false);
     const [createdCameraSecret, setCreatedCameraSecret] = useState<string | null>(null);
+
+    const [cameraStatus, setCameraStatus] = useState<"online" | "offline" | "unknown">("unknown");
 
     useEffect(() => {
         let cancelled = false;
@@ -145,6 +149,51 @@ export default function CameraPage() {
         run();
         return () => {
             cancelled = true;
+        };
+    }, [cameraId]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function run() {
+            if (!cameraId) return;
+
+            try {
+                const res = await getCameraStatus(cameraId);
+                if (cancelled) return;
+                setCameraStatus(res?.status ?? "unknown");
+            } catch {
+                if (cancelled) return;
+                setCameraStatus("unknown");
+            }
+        }
+
+        run();
+        return () => {
+            cancelled = true;
+        };
+    }, [cameraId]);
+
+    useEffect(() => {
+        if (!cameraId) return;
+
+        let cancelled = false;
+        const interval = window.setInterval(() => {
+            if (cancelled) return;
+            if (document.visibilityState === "hidden") return;
+            void (async () => {
+                try {
+                    const res = await getCameraStatus(cameraId);
+                    if (!cancelled) setCameraStatus(res?.status ?? "unknown");
+                } catch {
+                    // keep last known state
+                }
+            })();
+        }, 15000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
         };
     }, [cameraId]);
 
@@ -350,7 +399,10 @@ export default function CameraPage() {
                 <div className="mb-1 flex flex-row justify-between">
                     <div>
                         <div className="flex items-center gap-1">
-                            <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">{camera?.name ?? "Camera"}</h1>
+                            <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">
+                                {camera?.name ?? "Camera"}
+                            </h1>
+                            <SensorStatusBadge status={cameraStatus}/>
                             {canEdit ? (
                                 <Button
                                     variant="outline"

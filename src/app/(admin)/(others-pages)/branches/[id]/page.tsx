@@ -1,16 +1,23 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
+    type Alert,
+    type Branch,
+    type BranchPrediction,
+    type Camera,
     createCamera,
     createSensor,
     deleteBranch,
     getBranch,
+    getBranchAlerts,
     getBranchCameras,
     getBranchSensors,
+    getCameraStatus,
     getPrediction,
-    Sensor,
+    markAlertAsRead,
+    type Sensor,
     updateBranch,
 } from "@/libs/actions";
 import Button from "@/components/ui/button/Button";
@@ -26,20 +33,16 @@ import { isAdminOrSuperadmin } from "@/libs/roles";
 import Badge from "@/components/ui/badge/Badge";
 import { deriveAlertBadge } from "@/libs/branchStatus";
 import PredictionSparkline from "@/components/charts/sparkline/PredictionSparkline";
+import SensorStatusBadge from "@/components/common/SensorStatusBadge";
 
-type Branch = {
-    branch_id: string;
-    group_id: string;
-    name: string;
-    alert: unknown;
-};
-
-export default function BranchPage() {
+export default function BranchDetailsPage() {
     const params = useParams<{ id: string }>();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { notify } = useNotification();
 
     const id = params?.id;
+    const highlightedAlertId = searchParams?.get("alert");
 
     const [branch, setBranch] = useState<Branch | null>(null);
     const [loading, setLoading] = useState(true);
@@ -49,29 +52,19 @@ export default function BranchPage() {
     const [sensorsLoading, setSensorsLoading] = useState(false);
     const [sensorsError, setSensorsError] = useState<string | null>(null);
 
-    const [cameras, setCameras] = useState<
-        {
-            camera_id: string;
-            branch_id: string;
-            name: string;
-            updated_at: string;
-        }[]
-    >([]);
+    const [cameras, setCameras] = useState<Camera[]>([]);
     const [camerasLoading, setCamerasLoading] = useState(false);
     const [camerasError, setCamerasError] = useState<string | null>(null);
 
-    const [prediction, setPrediction] = useState<
-        | {
-        model_id: string;
-        model_version: string;
-        horizon: number;
-        step_ahead: number;
-        predictions: Record<"co2" | "temp" | "rh", number[]>;
-    }
-        | null
-    >(null);
+    const [cameraStatuses, setCameraStatuses] = useState<Record<string, "online" | "offline" | "unknown">>({});
+
+    const [prediction, setPrediction] = useState<BranchPrediction | null>(null);
     const [predictionLoading, setPredictionLoading] = useState(false);
     const [predictionError, setPredictionError] = useState<string | null>(null);
+
+    const [alerts, setAlerts] = useState<Alert[]>([]);
+    const [alertsLoading, setAlertsLoading] = useState(false);
+    const [alertsError, setAlertsError] = useState<string | null>(null);
 
     // Add camera modal/state (mirrors create sensor)
     const createCameraModal = useModal(false);
@@ -106,6 +99,15 @@ export default function BranchPage() {
     const disableAddCamera = useMemo(() => {
         return canEdit && hasCameras;
     }, [canEdit, hasCameras]);
+
+    // Disable creating more sensors if at least one already exists in this branch.
+    // Note: we only enforce this when the sensors list has loaded successfully.
+    const hasSensors = useMemo(() => {
+        return !sensorsLoading && !sensorsError && sensors.length > 0;
+    }, [sensors, sensorsLoading, sensorsError]);
+    const disableAddSensor = useMemo(() => {
+        return canEdit && hasSensors;
+    }, [canEdit, hasSensors]);
 
     useEffect(() => {
         let cancelled = false;
@@ -244,6 +246,63 @@ export default function BranchPage() {
         };
     }, [id]);
 
+    useEffect(() => {
+        let cancelled = false;
+
+        async function run() {
+            if (!id) return;
+
+            setAlertsLoading(true);
+            setAlertsError(null);
+            try {
+                const items = await getBranchAlerts(id);
+                if (cancelled) return;
+                setAlerts(Array.isArray(items) ? items : []);
+            } catch (e) {
+                if (cancelled) return;
+                const msg = e instanceof Error ? e.message : "Failed to load alerts.";
+                setAlertsError(msg);
+                setAlerts([]);
+            } finally {
+                if (!cancelled) setAlertsLoading(false);
+            }
+        }
+
+        run();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
+    useEffect(() => {
+        if (!highlightedAlertId) return;
+
+        // Delay scroll until DOM paints.
+        const t = window.setTimeout(() => {
+            const el = document.getElementById(`alert-${highlightedAlertId}`);
+            if (el) {
+                el.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+        }, 150);
+
+        return () => {
+            window.clearTimeout(t);
+        };
+    }, [highlightedAlertId, alertsLoading, alerts.length]);
+
+    async function handleAlertMarkRead(alert: Alert) {
+        if (!id) return;
+        if (alert.is_read) return;
+
+        setAlerts((prev) => prev.map((a) => (a.alert_id === alert.alert_id ? { ...a, is_read: true } : a)));
+        try {
+            await markAlertAsRead(id, alert.alert_id);
+        } catch {
+            setAlerts((prev) => prev.map((a) => (a.alert_id === alert.alert_id ? { ...a, is_read: false } : a)));
+        }
+    }
+
     async function refreshSensors() {
         if (!id) return;
         setSensorsLoading(true);
@@ -292,8 +351,107 @@ export default function BranchPage() {
         }
     }
 
+    async function refreshCameraStatuses(targetCameras?: Camera[]) {
+        const camList = Array.isArray(targetCameras) ? targetCameras : cameras;
+        if (camList.length === 0) return;
+
+        const concurrency = 6;
+        const next: Record<string, "online" | "offline" | "unknown"> = {};
+
+        for (let i = 0; i < camList.length; i += concurrency) {
+            const chunk = camList.slice(i, i + concurrency);
+            const results = await Promise.all(
+                chunk.map(async (c) => {
+                    try {
+                        const res = await getCameraStatus(c.camera_id);
+                        return [c.camera_id, res.status] as const;
+                    } catch {
+                        return [c.camera_id, "unknown"] as const;
+                    }
+                }),
+            );
+
+            for (const [cameraId, status] of results) {
+                next[cameraId] = status;
+            }
+        }
+
+        setCameraStatuses((prev) => ({ ...prev, ...next }));
+    }
+
+    // After cameras are loaded, fetch their statuses once.
+    useEffect(() => {
+        if (!camerasLoading && !camerasError && cameras.length > 0) {
+            void refreshCameraStatuses(cameras);
+        }
+        if (!camerasLoading && !camerasError && cameras.length === 0) {
+            setCameraStatuses({});
+        }
+    }, [camerasLoading, camerasError, cameras]);
+
+    // Poll camera statuses periodically (pause when tab is hidden).
+    useEffect(() => {
+        if (!id) return;
+        if (camerasLoading || camerasError || cameras.length === 0) return;
+
+        let cancelled = false;
+        const interval = window.setInterval(() => {
+            if (cancelled) return;
+            if (document.visibilityState === "hidden") return;
+            void refreshCameraStatuses();
+        }, 15000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, [id, camerasLoading, camerasError, cameras.length]);
+
+    // Auto-refresh prediction every 5s (pause when tab is hidden).
+    useEffect(() => {
+        if (!id) return;
+
+        let cancelled = false;
+        let inFlight = false;
+
+        const tick = async () => {
+            if (cancelled) return;
+            if (document.visibilityState === "hidden") return;
+            if (inFlight) return;
+            inFlight = true;
+            try {
+                const data = await getPrediction(id);
+                if (cancelled) return;
+                setPrediction((data as any)?.prediction ?? null);
+                setPredictionError(null);
+            } catch (e) {
+                if (cancelled) return;
+                const msg = e instanceof Error ? e.message : "Failed to load prediction.";
+                setPredictionError(msg);
+            } finally {
+                inFlight = false;
+            }
+        };
+
+        // Run once shortly after mount/branch change.
+        const initial = window.setTimeout(() => {
+            void tick();
+        }, 250);
+
+        const interval = window.setInterval(() => {
+            void tick();
+        }, 5000);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(initial);
+            window.clearInterval(interval);
+        };
+    }, [id]);
+
     function openCreateSensorModal() {
         if (!canEdit) return;
+        if (disableAddSensor) return;
         setSensorName("");
         setCreateSensorError(null);
         createSensorModal.openModal();
@@ -307,6 +465,7 @@ export default function BranchPage() {
 
     function openCreateCameraModal() {
         if (!canEdit) return;
+        if (disableAddCamera) return;
         setCameraName("");
         setCreateCameraError(null);
         createCameraModal.openModal();
@@ -554,7 +713,7 @@ export default function BranchPage() {
                                 {branch.name}
                             </h1>
                             {(() => {
-                                const b = deriveAlertBadge(branch.alert);
+                                const b = deriveAlertBadge("");  // will update to use real alert data when implemented
                                 return (
                                     <span title={b.title} className="inline-flex whitespace-nowrap">
                                         <Badge color={b.color} variant={b.variant} size="sm">
@@ -582,25 +741,6 @@ export default function BranchPage() {
                     <div className="flex items-center gap-2">
                         {canEdit ? (
                             <>
-                                <span
-                                    title={
-                                        disableAddCamera
-                                            ? "This branch already has a camera."
-                                            : undefined
-                                    }
-                                    className="inline-flex"
-                                >
-                                    <Button
-                                        size="sm"
-                                        onClick={openCreateCameraModal}
-                                        disabled={disableAddCamera}
-                                    >
-                                        Add camera
-                                    </Button>
-                                </span>
-                                <Button size="sm" onClick={openCreateSensorModal}>
-                                    Add sensor
-                                </Button>
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -615,9 +755,157 @@ export default function BranchPage() {
                     </div>
                 </div>
 
-                {/* Alerts badge moved to header for compact display */}
-
                 <div className="mt-6 space-y-6">
+                    <ComponentCard
+                        title="Devices"
+                        desc={(camerasLoading || sensorsLoading) ? "Loading devices…" : ""}
+                    >
+                        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-start">
+                            <div className="min-w-0">
+                                <div className="mb-2 flex items-center justify-between">
+                                    <div className="text-sm font-semibold text-gray-800 dark:text-white/90">Camera</div>
+                                    {canEdit ? (
+                                        <span
+                                            title={disableAddCamera ? "This branch already has a camera." : undefined}
+                                            className="inline-flex"
+                                        >
+                                             <Button
+                                                 size="sm"
+                                                 variant="outline"
+                                                 onClick={openCreateCameraModal}
+                                                 disabled={disableAddCamera}
+                                             >
+                                                 Add camera
+                                             </Button>
+                                         </span>
+                                    ) : null}
+                                </div>
+
+                                {camerasError ? (
+                                    <div
+                                        className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                                        {camerasError}
+                                    </div>
+                                ) : null}
+
+                                {!camerasLoading && !camerasError && cameras.length === 0 ? (
+                                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                                        No camera attached to this branch.
+                                    </div>
+                                ) : null}
+
+                                {camerasLoading ? (
+                                    <div
+                                        className="h-20 animate-pulse rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"/>
+                                ) : null}
+
+                                {!camerasLoading && !camerasError && cameras.length > 0 ? (
+                                    (() => {
+                                        const c = cameras[0] as (typeof cameras)[number];
+                                        return (
+                                            <button
+                                                key={c.camera_id}
+                                                type="button"
+                                                onClick={() => router.push(`/cameras/${encodeURIComponent(c.camera_id)}`)}
+                                                className="group w-full rounded-xl border border-gray-200 bg-white p-3 text-left shadow-theme-xs transition hover:border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/60"
+                                            >
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div
+                                                            className="truncate text-sm font-semibold text-gray-800 group-hover:text-gray-900 dark:text-white/90 dark:group-hover:text-white">
+                                                            {c.name || c.camera_id}&nbsp;
+                                                            <SensorStatusBadge
+                                                                status={cameraStatuses[c.camera_id] ?? "unknown"}/>
+                                                        </div>
+                                                        <div
+                                                            className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                                                            Camera ID: <span className="font-mono">{c.camera_id}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div
+                                                        className="text-xs text-gray-400 group-hover:text-gray-500 dark:text-gray-500 dark:group-hover:text-gray-400">
+                                                        View
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        );
+                                    })()
+                                ) : null}
+                            </div>
+
+                            <div className="min-w-0">
+                                <div className="mb-2 flex items-center justify-between">
+                                    <div className="text-sm font-semibold text-gray-800 dark:text-white/90">Sensor</div>
+                                    {canEdit ? (
+                                        <span
+                                            title={disableAddSensor ? "This branch already has a sensor." : undefined}
+                                            className="inline-flex"
+                                        >
+                                             <Button
+                                                 size="sm"
+                                                 variant="outline"
+                                                 onClick={openCreateSensorModal}
+                                                 disabled={disableAddSensor}
+                                             >
+                                                 Add sensor
+                                             </Button>
+                                         </span>
+                                    ) : null}
+                                </div>
+
+                                {sensorsError ? (
+                                    <div
+                                        className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+                                        {sensorsError}
+                                    </div>
+                                ) : null}
+
+                                {!sensorsLoading && !sensorsError && sensors.length === 0 ? (
+                                    <div className="text-sm text-gray-500 dark:text-gray-400">
+                                        No sensor found for this branch.
+                                    </div>
+                                ) : null}
+
+                                {sensorsLoading ? (
+                                    <div
+                                        className="h-20 animate-pulse rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"/>
+                                ) : null}
+
+                                {!sensorsLoading && !sensorsError && sensors.length > 0 ? (
+                                    (() => {
+                                        const s = sensors[0] as Sensor;
+                                        return (
+                                            <button
+                                                key={s.sensor_id}
+                                                type="button"
+                                                onClick={() => router.push(`/sensors/${encodeURIComponent(s.sensor_id)}`)}
+                                                className="group w-full rounded-xl border border-gray-200 bg-white p-3 text-left shadow-theme-xs transition hover:border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/60"
+                                            >
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div className="min-w-0">
+                                                        <div
+                                                            className="truncate text-sm font-semibold text-gray-800 group-hover:text-gray-900 dark:text-white/90 dark:group-hover:text-white">
+                                                            {s.name}&nbsp;
+                                                            <SensorStatusBadge status={(s as any)?.status}/>
+                                                        </div>
+                                                        <div
+                                                            className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                                                            Sensor ID: <span className="font-mono">{s.sensor_id}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div
+                                                        className="text-xs text-gray-400 group-hover:text-gray-500 dark:text-gray-500 dark:group-hover:text-gray-400">
+                                                        View
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        );
+                                    })()
+                                ) : null}
+                            </div>
+                        </div>
+                    </ComponentCard>
+
                     <ComponentCard
                         title="Prediction"
                         desc={predictionLoading ? "Loading prediction…" : ""}
@@ -720,136 +1008,77 @@ export default function BranchPage() {
                                         </div>
                                     );
                                 })()}
-
-                                <div className="flex items-center justify-end">
-                                    <Button size="sm" variant="outline" onClick={refreshPrediction}
-                                            disabled={predictionLoading}>
-                                        {predictionLoading ? "Refreshing..." : "Refresh"}
-                                    </Button>
-                                </div>
                             </div>
                         ) : null}
                     </ComponentCard>
 
                     <ComponentCard
-                        title={cameras.length === 1 ? "Camera" : "Cameras"}
-                        desc={camerasLoading ? "Loading cameras…" : ""}
+                        title="Alerts"
+                        desc={alertsLoading ? "Loading alerts…" : ""}
                     >
-                        {camerasError ? (
+                        {alertsError ? (
                             <div
                                 className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                                {camerasError}
+                                {alertsError}
                             </div>
                         ) : null}
 
-                        {!camerasLoading && !camerasError && cameras.length === 0 ? (
+                        {!alertsLoading && !alertsError && alerts.length === 0 ? (
                             <div className="text-sm text-gray-500 dark:text-gray-400">
-                                No cameras attached to this branch.
+                                No alerts for this branch.
                             </div>
                         ) : null}
 
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            {(camerasLoading ? Array.from({ length: 4 }) : cameras).map((camera, idx) => {
-                                if (camerasLoading) {
+                        <div className="space-y-4">
+                            {(alertsLoading ? Array.from({ length: 4 }) as Alert[] : alerts).map((alert, idx) => {
+                                if (alertsLoading) {
                                     return (
                                         <div
-                                            key={`camera-skeleton-${idx}`}
-                                            className="h-24 animate-pulse rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"
+                                            key={`alert-skeleton-${idx}`}
+                                            className="h-20 animate-pulse rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"
                                         />
                                     );
                                 }
 
-                                const c = camera as (typeof cameras)[number];
-
                                 return (
-                                    <button
-                                        key={c.camera_id}
-                                        type="button"
-                                        onClick={() => router.push(`/cameras/${encodeURIComponent(c.camera_id)}`)}
-                                        className="group w-full rounded-xl border border-gray-200 bg-white p-4 text-left shadow-theme-xs transition hover:border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/60"
+                                    <div
+                                        key={alert.alert_id}
+                                        id={`alert-${alert.alert_id}`}
+                                        className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs transition-all duration-200 ease-in-out hover:shadow-md dark:border-gray-800 dark:bg-gray-900"
                                     >
-                                        <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0">
-                                                <div
-                                                    className="truncate text-sm font-semibold text-gray-800 group-hover:text-gray-900 dark:text-white/90 dark:group-hover:text-white">
-                                                    {c.name || c.camera_id}
-                                                </div>
-                                                <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                                    Camera ID: <span className="font-mono">{c.camera_id}</span>
+                                        <div className="flex flex-col gap-1">
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">
+                                                    {new Date(alert.created_at).toLocaleString()}
                                                 </div>
                                             </div>
-                                            <div
-                                                className="text-xs text-gray-400 group-hover:text-gray-500 dark:text-gray-500 dark:group-hover:text-gray-400">
-                                                View
+                                            <div className="text-sm text-gray-500 dark:text-gray-400">
+                                                {alert.message}
                                             </div>
                                         </div>
-                                    </button>
+
+                                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                                            <span className="inline-flex">
+                                                <Badge
+                                                    color={alert.is_read ? "light" : "warning"}
+                                                    variant={alert.is_read ? "light" : "solid"}
+                                                    size="sm"
+                                                >
+                                                    {alert.is_read ? "Read" : "Unread"}
+                                                </Badge>
+                                            </span>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => handleAlertMarkRead(alert)}
+                                                disabled={alert.is_read}
+                                            >
+                                                {alert.is_read ? "Marked as read" : "Mark as read"}
+                                            </Button>
+                                        </div>
+                                    </div>
                                 );
                             })}
-                        </div>
-                    </ComponentCard>
-
-                    <ComponentCard
-                        title={sensors.length === 1 ? "Sensor" : "Sensors"}
-                        desc={
-                            sensorsLoading
-                                ? "Loading sensors…"
-                                : `${sensors.length} sensor${sensors.length === 1 ? "" : "s"} in this branch.`
-                        }
-                    >
-                        {sensorsError ? (
-                            <div
-                                className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
-                                {sensorsError}
-                            </div>
-                        ) : null}
-
-                        {!sensorsLoading && !sensorsError && sensors.length === 0 ? (
-                            <div className="text-sm text-gray-500 dark:text-gray-400">
-                                No sensors found for this branch.
-                            </div>
-                        ) : null}
-
-                        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            {(sensorsLoading ? Array.from({ length: 4 }) : sensors).map(
-                                (sensor, idx) => {
-                                    if (sensorsLoading) {
-                                        return (
-                                            <div
-                                                key={`skeleton-${idx}`}
-                                                className="h-24 animate-pulse rounded-xl border border-gray-200 bg-gray-50 dark:border-gray-800 dark:bg-gray-900"
-                                            />
-                                        );
-                                    }
-
-                                    const s = sensor as Sensor;
-
-                                    return (
-                                        <button
-                                            key={s.sensor_id}
-                                            type="button"
-                                            onClick={() => router.push(`/sensors/${encodeURIComponent(s.sensor_id)}`)}
-                                            className="group w-full rounded-xl border border-gray-200 bg-white p-4 text-left shadow-theme-xs transition hover:border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-800 dark:bg-gray-900 dark:hover:border-gray-700 dark:hover:bg-gray-900/60"
-                                        >
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <div
-                                                        className="truncate text-sm font-semibold text-gray-800 group-hover:text-gray-900 dark:text-white/90 dark:group-hover:text-white">
-                                                        {s.name}
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                                        Sensor ID: <span className="font-mono">{s.sensor_id}</span>
-                                                    </div>
-                                                </div>
-                                                <div
-                                                    className="text-xs text-gray-400 group-hover:text-gray-500 dark:text-gray-500 dark:group-hover:text-gray-400">
-                                                    View
-                                                </div>
-                                            </div>
-                                        </button>
-                                    );
-                                },
-                            )}
                         </div>
                     </ComponentCard>
                 </div>

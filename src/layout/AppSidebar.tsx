@@ -5,7 +5,7 @@ import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
 import { ChevronDownIcon, GridIcon, PlusIcon, UserCircleIcon, UserMultipleIcon, VectorNodesIcon } from "../icons/index";
-import { createBranch, getBranches } from "@/libs/actions";
+import { type Branch, createBranch, getBranches } from "@/libs/actions";
 import { onBranchesChanged } from "@/libs/branchEvents";
 import { type CurrentUser, getCurrentUser } from "@/libs/auth";
 import { isAdminOrSuperadmin } from "@/libs/roles";
@@ -27,13 +27,6 @@ type NavItem = {
         new?: boolean;
         onclick?: () => void;
     }[];
-};
-
-type Branch = {
-    branch_id: string;
-    group_id: string;
-    name: string;
-    alert: any;
 };
 
 const navItemStatic: NavItem[] = [

@@ -21,6 +21,7 @@ import Input from "@/components/form/input/InputField";
 import DateTimeRangePicker, { type DateTimeRange } from "@/components/form/DateTimeRangePicker";
 import { getCurrentUser } from "@/libs/auth";
 import { isAdminOrSuperadmin } from "@/libs/roles";
+import SensorStatusBadge from "@/components/common/SensorStatusBadge";
 
 function formatCellValue(v: unknown) {
     if (v === null || v === undefined) return "";
@@ -579,6 +580,7 @@ export default function SensorPage() {
                     <div>
                         <div className="flex items-center gap-1">
                             <h1 className="text-2xl font-semibold text-gray-800 dark:text-white/90">{sensor.name}</h1>
+                            <SensorStatusBadge status={(sensor as any)?.status}/>
                             {canEdit ? (
                                 <Button
                                     variant="outline"
@@ -692,7 +694,6 @@ export default function SensorPage() {
                                     <option value="100">100</option>
                                     <option value="300">300</option>
                                     <option value="500">500</option>
-                                    <option value="all">All</option>
                                 </select>
                             </label>
 

@@ -11,6 +11,8 @@ type Props = {
     playsInline?: boolean;
     poster?: string;
     onErrorAction?: (message: string) => void;
+    /** Called when the player transitions between playing and not playing. */
+    onPlayingChange?: (playing: boolean) => void;
     /**
      * If true, optimize for long-running live/infinite streams (buffer caps + stay near live edge).
      * Defaults to true.
@@ -29,11 +31,13 @@ export default function HlsPlayer({
     playsInline = true,
     poster,
     onErrorAction,
+    onPlayingChange,
     live = true,
     debug = false,
 }: Props) {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [isPlaying, setIsPlaying] = useState(false);
 
     const normalizedSrc = useMemo(() => src.trim(), [src]);
 
@@ -45,23 +49,57 @@ export default function HlsPlayer({
         const video = videoRef.current;
         if (!video) return;
 
+        const setPlaying = (playing: boolean) => {
+            if (cancelled) return;
+            setIsPlaying(playing);
+            onPlayingChange?.(playing);
+            // If we recovered and are playing again, hide any prior error.
+            if (playing) setError(null);
+        };
+
+        const onPlaying = () => setPlaying(true);
+        const onPause = () => setPlaying(false);
+        const onEnded = () => setPlaying(false);
+        const onWaiting = () => setPlaying(false);
+        const onStalled = () => setPlaying(false);
+
+        // Detect native media element errors (rare for MSE, common for native HLS).
+        const onNativeError = () => {
+            const mediaError = video.error;
+            const code = mediaError?.code;
+            const msg = code ? `Playback error (code ${code}).` : "Playback error.";
+            // Report but let UI decide if it should be shown (we suppress while playing).
+            setError(msg);
+            onErrorAction?.(msg);
+        };
+
+        video.addEventListener("playing", onPlaying);
+        video.addEventListener("pause", onPause);
+        video.addEventListener("ended", onEnded);
+        video.addEventListener("waiting", onWaiting);
+        video.addEventListener("stalled", onStalled);
+        video.addEventListener("error", onNativeError);
+
         // Some video attributes aren't in React's typed props; set them directly.
         video.disableRemotePlayback = true;
 
         // Reset element state when src changes to avoid MediaSource leftovers.
         try {
             video.pause();
-            // Clearing src helps some browsers release old MSE buffers.
             video.removeAttribute("src");
             video.load();
         } catch {
             // ignore
         }
 
+        setPlaying(false);
         setError(null);
 
         const reportError = (msg: string) => {
             if (cancelled) return;
+            // If the video is currently playing, don't surface errors (live streams can be noisy).
+            if (videoRef.current && !videoRef.current.paused && !videoRef.current.ended) return;
+
             // avoid spamming the UI on noisy live streams
             if (msg && msg !== lastUiError) {
                 lastUiError = msg;
@@ -414,6 +452,16 @@ export default function HlsPlayer({
         return () => {
             cancelled = true;
             try {
+                video.removeEventListener("playing", onPlaying);
+                video.removeEventListener("pause", onPause);
+                video.removeEventListener("ended", onEnded);
+                video.removeEventListener("waiting", onWaiting);
+                video.removeEventListener("stalled", onStalled);
+                video.removeEventListener("error", onNativeError);
+            } catch {
+                // ignore
+            }
+            try {
                 removeVideoListeners?.();
             } catch {
                 // ignore
@@ -424,7 +472,7 @@ export default function HlsPlayer({
                 // ignore
             }
         };
-    }, [normalizedSrc, onErrorAction, autoPlay, live, debug]);
+    }, [normalizedSrc, onErrorAction, onPlayingChange, autoPlay, live, debug]);
 
     return (
         <div className={className}>
@@ -439,7 +487,7 @@ export default function HlsPlayer({
                 className="h-full object-contain"
             />
 
-            {error ? <div className="mt-2 text-sm text-red-600 w-fit">{error}</div> : null}
+            {error && !isPlaying ? <div className="mt-2 text-sm text-red-600 w-fit">{error}</div> : null}
         </div>
     );
 }
