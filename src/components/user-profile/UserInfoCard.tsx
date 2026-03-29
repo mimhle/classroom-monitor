@@ -7,7 +7,7 @@ import Input from "../form/input/InputField";
 import Label from "../form/Label";
 import { KeyIcon, PencilIcon } from "@/icons";
 import { useNotification } from "@/components/ui/notification";
-import { getGroup, type Group, updateUser } from "@/libs/actions";
+import { changePassword, getGroup, type Group, updateUser } from "@/libs/actions";
 
 export default function UserInfoCard({ user }: { user: any }) {
     const { notify } = useNotification();
@@ -89,6 +89,10 @@ export default function UserInfoCard({ user }: { user: any }) {
                 notify({ variant: "error", title: "Can't update password", message: "Missing user id." });
                 return;
             }
+            if (!pwdDraft.currentPassword.trim()) {
+                notify({ variant: "error", title: "Validation error", message: "Current password is required." });
+                return;
+            }
             if (!pwdDraft.newPassword.trim()) {
                 notify({ variant: "error", title: "Validation error", message: "New password is required." });
                 return;
@@ -100,9 +104,10 @@ export default function UserInfoCard({ user }: { user: any }) {
 
             setPwdSaving(true);
             try {
-                // Many backends only require the new password for an update.
-                // If the backend requires currentPassword, it can be added server-side later.
-                await updateUser(String(userId), { password: pwdDraft.newPassword } as any);
+                await changePassword({
+                    old_password: pwdDraft.currentPassword,
+                    new_password: pwdDraft.newPassword,
+                });
                 notify({
                     variant: "success",
                     title: "Password updated",
@@ -116,7 +121,7 @@ export default function UserInfoCard({ user }: { user: any }) {
                 setPwdSaving(false);
             }
         },
-        [closeModalPassword, notify, pwdDraft.confirmPassword, pwdDraft.newPassword, userId],
+        [closeModalPassword, notify, pwdDraft.confirmPassword, pwdDraft.currentPassword, pwdDraft.newPassword, userId],
     );
 
     const groupId = useMemo(() => {

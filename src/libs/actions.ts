@@ -769,3 +769,24 @@ export async function updateGroup(id: string, input: CreateGroupInput): Promise<
         });
     });
 }
+
+export async function changePassword(input: { old_password: string; new_password: string }) {
+    return fetch(`/api/auth/change-password`, {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            // Prefer JSON error if provided, fallback to text.
+            const json = await res.json().catch(() => null);
+            const text = json?.error ?? (await res.text().catch(() => ""));
+            throw new Error(
+                `Failed to change password: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().catch(() => ({ ok: true }));
+    });
+}
