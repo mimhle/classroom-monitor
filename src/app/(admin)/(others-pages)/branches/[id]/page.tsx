@@ -1464,11 +1464,31 @@ export default function BranchDetailsPage() {
                                 Copy and save this secret now. For security reasons, it may not be shown again.
                             </p>
 
-                            <div
-                                className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900">
-                                <div className="text-xs text-gray-500 dark:text-gray-400">Secret</div>
-                                <div className="mt-1 break-all font-mono text-sm text-gray-800 dark:text-white/90">
-                                    {createdCameraSecret ?? ""}
+                            <div className="mt-4 grid grid-cols-1 gap-3">
+                                <div
+                                    className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900"
+                                >
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">Camera id</div>
+                                    <div className="mt-1 break-all font-mono text-sm text-gray-800 dark:text-white/90">
+                                        {createdCameraId ?? (
+                                            <span className="font-sans text-xs text-gray-500 dark:text-gray-400">
+                                                (missing camera id)
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div
+                                    className="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-gray-800 dark:bg-gray-900"
+                                >
+                                    <div className="text-xs text-gray-500 dark:text-gray-400">Secret</div>
+                                    <div className="mt-1 break-all font-mono text-sm text-gray-800 dark:text-white/90">
+                                        {createdCameraSecret ?? (
+                                            <span className="font-sans text-xs text-gray-500 dark:text-gray-400">
+                                                (missing secret)
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
 

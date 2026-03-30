@@ -99,27 +99,45 @@ export default function LogsAdmin() {
         return visible.map((p) => p.raw).join("\n");
     }, [visible]);
 
-    const load = useCallback(async () => {
-        if (inFlightRef.current) return;
-        inFlightRef.current = true;
+    const load = useCallback(
+        async (opts?: { silent?: boolean }) => {
+            if (inFlightRef.current) return;
+            inFlightRef.current = true;
 
-        setLoading(true);
-        setError(null);
-        try {
-            const res = await getLogs();
-            const c = typeof (res as any)?.count === "number" ? (res as any).count : 0;
-            const data = Array.isArray((res as any)?.items) ? ((res as any).items as Log[]) : [];
-            setCount(c);
-            setItems(data);
-        } catch (e: any) {
-            const message = e?.message ?? "Failed to load logs";
-            setError(message);
-            notify({ variant: "error", title: "Failed to load logs", message });
-        } finally {
-            setLoading(false);
-            inFlightRef.current = false;
-        }
-    }, [notify]);
+            const silent = opts?.silent === true;
+
+            // Only show the loading UI when we don't have any data yet, or when
+            // the user explicitly refreshes. Interval polling should be silent.
+            const shouldShowLoading = !silent && items.length === 0;
+
+            if (shouldShowLoading) {
+                setLoading(true);
+                setError(null);
+            }
+
+            try {
+                const res = await getLogs();
+                const c = typeof (res as any)?.count === "number" ? (res as any).count : 0;
+                const data = Array.isArray((res as any)?.items) ? ((res as any).items as Log[]) : [];
+                setCount(c);
+                setItems(data);
+                if (!silent) setError(null);
+            } catch (e: any) {
+                const message = e?.message ?? "Failed to load logs";
+
+                // On background polling failures, keep showing the last known data
+                // and avoid flicker/spam.
+                if (!silent) {
+                    setError(message);
+                    notify({ variant: "error", title: "Failed to load logs", message });
+                }
+            } finally {
+                if (shouldShowLoading) setLoading(false);
+                inFlightRef.current = false;
+            }
+        },
+        [items.length, notify]
+    );
 
     useEffect(() => {
         load();
@@ -127,7 +145,7 @@ export default function LogsAdmin() {
 
     useEffect(() => {
         const id = window.setInterval(() => {
-            load();
+            load({ silent: true });
         }, 5000);
 
         return () => {
@@ -141,7 +159,8 @@ export default function LogsAdmin() {
                 <div>
                     <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Logs</h1>
                     <p className="text-sm text-gray-500 dark:text-gray-400">
-                        {loading ? "Loading…" : `${visible.length} shown`} {count ? `(total: ${count})` : ""}
+                        {loading && items.length === 0 ? "Loading…" : `${visible.length} shown`}{" "}
+                        {count ? `(total: ${count})` : ""}
                     </p>
                 </div>
 
@@ -154,7 +173,8 @@ export default function LogsAdmin() {
                         />
                     </div>
 
-                    <Button variant="outline" onClick={load} disabled={loading}>
+                    <Button variant="outline" onClick={() => load({ silent: false })}
+                            disabled={loading && items.length === 0}>
                         Refresh
                     </Button>
                 </div>
@@ -171,7 +191,7 @@ export default function LogsAdmin() {
                 <textarea
                     className="h-[65vh] w-full resize-none rounded-lg border border-gray-200 bg-gray-50 p-3 font-mono text-xs leading-5 text-gray-900 outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950/40 dark:text-gray-100"
                     readOnly
-                    value={loading ? "Loading…" : visible.length === 0 ? "No logs found." : bigText}
+                    value={loading && items.length === 0 ? "Loading…" : visible.length === 0 ? "No logs found." : bigText}
                 />
             </div>
         </div>
