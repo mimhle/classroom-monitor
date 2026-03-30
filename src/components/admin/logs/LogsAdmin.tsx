@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Button from "@/components/ui/button/Button";
 import Input from "@/components/form/input/InputField";
 import { useNotification } from "@/components/ui/notification";
@@ -76,6 +76,8 @@ export default function LogsAdmin() {
 
     const [query, setQuery] = useState("");
 
+    const inFlightRef = useRef(false);
+
     const parsed = useMemo(() => items.map(parseLogLine), [items]);
 
     const visible = useMemo(() => {
@@ -98,6 +100,9 @@ export default function LogsAdmin() {
     }, [visible]);
 
     const load = useCallback(async () => {
+        if (inFlightRef.current) return;
+        inFlightRef.current = true;
+
         setLoading(true);
         setError(null);
         try {
@@ -112,11 +117,22 @@ export default function LogsAdmin() {
             notify({ variant: "error", title: "Failed to load logs", message });
         } finally {
             setLoading(false);
+            inFlightRef.current = false;
         }
     }, [notify]);
 
     useEffect(() => {
         load();
+    }, [load]);
+
+    useEffect(() => {
+        const id = window.setInterval(() => {
+            load();
+        }, 5000);
+
+        return () => {
+            window.clearInterval(id);
+        };
     }, [load]);
 
     return (

@@ -114,6 +114,31 @@ function truncateMiddle(value: string, head = 6, tail = 6): string {
     return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
+function parseMaybeJson<T = unknown>(value: unknown): T | unknown {
+    if (typeof value !== "string") return value;
+
+    const trimmed = value.trim();
+    if (!trimmed) return value;
+
+    // Only attempt JSON parse when it looks like JSON. This avoids turning
+    // plain strings into errors/noise.
+    const looksJson =
+        (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+        (trimmed.startsWith("[") && trimmed.endsWith("]")) ||
+        trimmed === "null" ||
+        trimmed === "true" ||
+        trimmed === "false" ||
+        /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed);
+
+    if (!looksJson) return value;
+
+    try {
+        return JSON.parse(trimmed) as T;
+    } catch {
+        return value;
+    }
+}
+
 export default function TrainingAdmin() {
     const { notify } = useNotification();
 
@@ -1063,10 +1088,22 @@ export default function TrainingAdmin() {
                                 className="mt-2 max-h-[400px] overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs text-gray-900 dark:border-gray-800 dark:bg-gray-900/40 dark:text-gray-100">
                                 {(() => {
                                     const job: any = selectedJob as any;
-                                    const params = job?.params ?? job?.job_params ?? job?.payload ?? job?.input ?? null;
-                                    const toShow = params ?? selectedJob;
+
+                                    // Jobs come back in varying shapes. The params payload might be nested.
+                                    const root = job?.params ?? job?.job_params ?? job?.payload ?? job?.input ?? job ?? null;
+
+                                    const pick = (key: string) => parseMaybeJson((root as any)?.[key]);
+
+                                    const toShow = {
+                                        dataset_params: pick("dataset_params"),
+                                        feature_engineering_params: pick("feature_engineering_params"),
+                                        forecast_params: pick("forecast_params"),
+                                        model_hyperparams: pick("model_hyperparams"),
+                                        result: pick("result"),
+                                    };
+
                                     try {
-                                        return JSON.stringify(toShow ?? null, null, 2);
+                                        return JSON.stringify(toShow, null, 2);
                                     } catch {
                                         return String(toShow);
                                     }
