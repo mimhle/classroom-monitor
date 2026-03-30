@@ -72,8 +72,6 @@ const navItemStatic: NavItem[] = [
     },
 ];
 
-const LAST_BRANCH_STORAGE_KEY = "classroom-monitor:last-branch-id";
-
 type AppSidebarProps = { initialUser?: CurrentUser };
 
 const AppSidebar: React.FC<AppSidebarProps> = ({ initialUser }) => {
@@ -325,7 +323,8 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ initialUser }) => {
             if (item.path === "/") return !isSA;
             if (item.path === "/users") return isAdmin;
             if (item.path === "/groups") return isSA;
-            if (item.path === "/training") return isAdmin;
+            // Admin-only: superadmins should not see the training tab.
+            if (item.path === "/training") return isAdmin && !isSA;
             if (item.path === "/logs") return isAdmin;
             return true;
         });
