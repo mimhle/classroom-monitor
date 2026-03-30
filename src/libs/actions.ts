@@ -28,15 +28,16 @@ export type Camera = {
     updated_at: string;
 };
 
-export async function getBranches() {
+export async function getBranches(): Promise<Branch[]> {
     return fetch(`/api/branches`, {
         method: "GET",
         cache: "no-store",
-    }).then((res) => {
+    }).then(async (res) => {
         if (!res.ok) {
             throw new Error(`Failed to fetch branches: ${res.statusText}`);
         }
-        return res.json();
+        const data = await res.json();
+        return data.data;
     });
 }
 
@@ -47,6 +48,7 @@ export type CreateBranchInput = {
         activate: boolean;
         sensors: Record<SensorField, SensorThresholds>;
     };
+    model_id?: string | null;
 };
 
 export async function createBranch(input: CreateBranchInput) {
@@ -163,14 +165,7 @@ export async function getAlertsFeed(options?: {
     const limit = options?.limit ?? 10;
     const includeRead = options?.includeRead ?? true;
 
-    const branchesRes = await getBranches();
-    const branches: Branch[] = Array.isArray((branchesRes as any)?.data)
-        ? ((branchesRes as any).data as Branch[])
-        : Array.isArray(branchesRes)
-            ? (branchesRes as Branch[])
-            : Array.isArray((branchesRes as any)?.items)
-                ? ((branchesRes as any).items as Branch[])
-                : [];
+    const branches = await getBranches();
 
     if (branches.length === 0) return [];
 
@@ -788,5 +783,230 @@ export async function changePassword(input: { old_password: string; new_password
             );
         }
         return res.json().catch(() => ({ ok: true }));
+    });
+}
+
+export type CreateJobInput = {
+    dataset: {
+        branch_id: string;
+        date_from: string;
+        date_to: string;
+        features: (SensorField | "people")[];
+        targets: SensorField[];
+    };
+    feature_engineering: {
+        lags: number[];
+        rolls: number[];
+        use_time_features: boolean;
+        use_diff_features: boolean;
+        use_occupancy: boolean;
+        use_interaction: boolean;
+    };
+    forecast: {
+        horizon: number;
+        step_ahead: number;
+    };
+    model_hyperparams: {
+        n_estimators: number;
+        max_depth: number;
+        learning_rate: number;
+        subsample: number;
+        colsample_bytree: number;
+    };
+}
+
+export type CreateJobReturn = {
+    job_id: string;
+    status: "pending" | "running" | "completed" | "failed";
+    message?: string;
+}
+
+export async function createJob(input: CreateJobInput): Promise<CreateJobReturn> {
+    return fetch(`/api/jobs/create`, {
+        method: "POST",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify(input),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to create job: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export type Job = {
+    job_id: string;
+    branch_id: string;
+    user_id: string;
+    secret: string;
+    dataset_params: string; // as json string
+    feature_engineering_params: string; // as json string
+    forecast_params: string; // as json string
+    model_hyperparams: string; // as json string
+    status: "running" | "succeeded" | "pending";
+    result: string | null;
+    created_at: string;
+    updated_at: string;
+    message: string | null;
+    model_id: string | null;
+    model_name: string | null;
+}
+
+export function getJobs(): Promise<Job[]> {
+    return fetch(`/api/jobs`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch jobs: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Job[];
+        });
+    });
+}
+
+export async function getJob(id: string): Promise<Job> {
+    return fetch(`/api/jobs/status/${encodeURIComponent(id)}`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch job: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Job;
+        });
+    });
+}
+
+export async function cancelJob(id: string) {
+    return fetch(`/api/jobs/cancel/${encodeURIComponent(id)}`, {
+        method: "POST",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to cancel job: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+    });
+}
+
+export async function getJobDefaultParams(): Promise<CreateJobInput> {
+    return fetch(`/api/jobs/defaults`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch job default params: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""
+                }`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as CreateJobInput;
+        });
+    });
+}
+
+export type Model = {
+    model_id: string;
+    branch_id: string;
+    name: string;
+    version: string;
+    created_at: string;
+}
+
+export async function getAllModels(): Promise<{
+    count: number;
+    items: Model[];
+}> {
+    return fetch(`/api/models`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch models: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
+    });
+}
+
+export async function updateModel(modelId: string, name: string): Promise<Model> {
+    return fetch(`/api/models/${encodeURIComponent(modelId)}`, {
+        method: "PATCH",
+        headers: {
+            "content-type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to update model: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data as Model;
+        });
+    });
+}
+
+export async function deleteModel(modelId: string) {
+    return fetch(`/api/models/${encodeURIComponent(modelId)}`, {
+        method: "DELETE",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to delete model: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+    });
+}
+
+export type Log = string;
+
+export async function getLogs(): Promise<{
+    count: number;
+    items: Log[];
+}> {
+    return fetch(`/api/logs`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to fetch logs: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.json().then((data) => {
+            return data.data;
+        });
     });
 }

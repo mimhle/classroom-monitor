@@ -60,6 +60,8 @@ export default function CameraPage() {
 
     const [cameraStatus, setCameraStatus] = useState<"online" | "offline" | "unknown">("unknown");
 
+    const isStreamAllowed = cameraStatus === "online";
+
     useEffect(() => {
         let cancelled = false;
         getCurrentUser()
@@ -111,6 +113,14 @@ export default function CameraPage() {
         async function run() {
             if (!cameraId) return;
 
+            // If camera isn't online, don't request/keep a stream URL.
+            if (!isStreamAllowed) {
+                setStreamLoading(false);
+                setStreamError(null);
+                setStreamUrl(null);
+                return;
+            }
+
             setStreamLoading(true);
             setStreamError(null);
             setStreamUrl(null);
@@ -150,7 +160,7 @@ export default function CameraPage() {
         return () => {
             cancelled = true;
         };
-    }, [cameraId]);
+    }, [cameraId, isStreamAllowed]);
 
     useEffect(() => {
         let cancelled = false;
@@ -496,7 +506,13 @@ export default function CameraPage() {
                 ) : null}
 
                 <ComponentCard title="Live stream">
-                    {streamLoading ? (
+                    {!isStreamAllowed ? (
+                        <div className="text-sm text-gray-500">
+                            {cameraStatus === "offline"
+                                ? "Camera is offline. Live stream is unavailable."
+                                : "Checking camera status…"}
+                        </div>
+                    ) : streamLoading ? (
                         <div className="text-sm text-gray-500">Requesting access token…</div>
                     ) : streamError ? (
                         <div className="text-sm text-red-600">{streamError}</div>

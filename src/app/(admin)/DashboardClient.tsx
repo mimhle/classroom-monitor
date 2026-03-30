@@ -245,8 +245,7 @@ export default function DashboardClient() {
         setLoading(true);
         setError(null);
         try {
-            const res = (await getBranches()) as any;
-            const items = (res?.data ?? []) as Branch[];
+            const items = (await getBranches());
             setBranches(Array.isArray(items) ? items : []);
         } catch (e) {
             const msg = e instanceof Error ? e.message : "Failed to fetch branches.";
@@ -271,8 +270,7 @@ export default function DashboardClient() {
             setSensorError(null);
 
             try {
-                const res = (await getBranches()) as any;
-                const branchItems = (res?.data ?? []) as Branch[];
+                const branchItems = (await getBranches());
                 const branchesSafe = Array.isArray(branchItems) ? branchItems : [];
 
                 // Fetch cameras for each branch (small fan-out)

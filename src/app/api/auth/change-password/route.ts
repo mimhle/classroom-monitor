@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 function getBackendBaseUrl() {
-    const baseUrl = process.env.AUTH_API_BASE_URL;
+    const baseUrl = process.env.AUTH_API_BASE_URL || process.env.API_BASE_URL;
     if (!baseUrl) {
-        throw new Error("Missing AUTH_API_BASE_URL");
+        throw new Error("Missing API_BASE_URL");
     }
     return baseUrl.replace(/\/$/, "");
 }

@@ -10,6 +10,7 @@ import {
     createCamera,
     createSensor,
     deleteBranch,
+    getAllModels,
     getBranch,
     getBranchAlerts,
     getBranchCameras,
@@ -17,6 +18,7 @@ import {
     getCameraStatus,
     getPrediction,
     markAlertAsRead,
+    type Model,
     type Sensor,
     updateBranch,
 } from "@/libs/actions";
@@ -62,6 +64,14 @@ export default function BranchDetailsPage() {
     const [prediction, setPrediction] = useState<BranchPrediction | null>(null);
     const [predictionLoading, setPredictionLoading] = useState(false);
     const [predictionError, setPredictionError] = useState<string | null>(null);
+
+    // Change model modal/state
+    const changeModelModal = useModal(false);
+    const [models, setModels] = useState<Model[]>([]);
+    const [modelsLoading, setModelsLoading] = useState(false);
+    const [modelsError, setModelsError] = useState<string | null>(null);
+    const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+    const [changingModel, setChangingModel] = useState(false);
 
     const [alerts, setAlerts] = useState<Alert[]>([]);
     const [alertsLoading, setAlertsLoading] = useState(false);
@@ -257,6 +267,37 @@ export default function BranchDetailsPage() {
         async function run() {
             if (!id) return;
 
+            setModelsLoading(true);
+            setModelsError(null);
+            try {
+                const res = await getAllModels();
+                if (cancelled) return;
+
+                const all = Array.isArray(res?.items) ? res.items : [];
+                setModels(all);
+            } catch (e) {
+                if (cancelled) return;
+                const msg = e instanceof Error ? e.message : "Failed to load models.";
+                setModelsError(msg);
+                setModels([]);
+            } finally {
+                if (!cancelled) setModelsLoading(false);
+            }
+        }
+
+        run();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [id]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function run() {
+            if (!id) return;
+
             setAlertsLoading(true);
             setAlertsError(null);
             try {
@@ -337,22 +378,6 @@ export default function BranchDetailsPage() {
             setCameras([]);
         } finally {
             setCamerasLoading(false);
-        }
-    }
-
-    async function refreshPrediction() {
-        if (!id) return;
-        setPredictionLoading(true);
-        setPredictionError(null);
-        try {
-            const data = await getPrediction(id);
-            setPrediction((data as any)?.prediction ?? null);
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : "Failed to load prediction.";
-            setPredictionError(msg);
-            setPrediction(null);
-        } finally {
-            setPredictionLoading(false);
         }
     }
 
@@ -445,7 +470,7 @@ export default function BranchDetailsPage() {
 
         const interval = window.setInterval(() => {
             void tick();
-        }, 5000);
+        }, 30000);
 
         return () => {
             cancelled = true;
@@ -460,6 +485,81 @@ export default function BranchDetailsPage() {
         setSensorName("");
         setCreateSensorError(null);
         createSensorModal.openModal();
+    }
+
+    function openChangeModelModal() {
+        if (!canEdit) return;
+        const current = (branch as any)?.model_id || prediction?.model_id || "";
+        setSelectedModelId(current ? String(current) : null);
+        changeModelModal.openModal();
+    }
+
+    function closeChangeModelModal() {
+        if (changingModel) return;
+        changeModelModal.closeModal();
+        setSelectedModelId(null);
+    }
+
+    async function onChangeModelSubmit(e: React.FormEvent) {
+        e.preventDefault();
+        if (!canEdit) return;
+
+        if (!id || !branch) {
+            notify({ variant: "error", title: "Change model failed", message: "Missing branch id." });
+            return;
+        }
+
+        const raw = selectedModelId?.trim() ?? "";
+        const isDefault = raw.length === 0;
+        const nextModelId = isDefault ? null : raw;
+
+        if (!isDefault && !raw) {
+            notify({ variant: "error", title: "Invalid model", message: "Please select a model." });
+            return;
+        }
+
+        const group_id = editUserGroupId ?? branch.group_id;
+        if (!group_id) {
+            notify({ variant: "error", title: "Change model failed", message: "Missing group id for this user." });
+            return;
+        }
+
+        setChangingModel(true);
+        try {
+            await updateBranch(id, {
+                name: branch.name,
+                group_id,
+                thresholds: (branch as any)?.thresholds,
+                model_id: nextModelId,
+            });
+
+            setBranch((prev) => {
+                if (!prev) return prev;
+                const next: any = { ...prev };
+                next.model_id = nextModelId;
+                return next;
+            });
+
+            // Refresh prediction so the UI reflects the server's model selection.
+            try {
+                const data = await getPrediction(id);
+                setPrediction((data as any)?.prediction ?? null);
+            } catch {
+                // It's OK if prediction refresh fails; branch update already succeeded.
+            }
+
+            closeChangeModelModal();
+            notify({
+                variant: "success",
+                title: "Model changed",
+                message: isDefault ? "Branch will now use the default prediction model." : "Prediction model updated for this branch.",
+            });
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to change model.";
+            notify({ variant: "error", title: "Change model failed", message });
+        } finally {
+            setChangingModel(false);
+        }
     }
 
     function closeCreateSensorModal() {
@@ -986,13 +1086,44 @@ export default function BranchDetailsPage() {
                                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                     <div
                                         className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
-                                        <div className="text-xs text-gray-500 dark:text-gray-400">Model</div>
-                                        <div className="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
-                                            {prediction.model_id}
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="text-xs text-gray-500 dark:text-gray-400">Model</div>
+                                                <div
+                                                    className="mt-1 text-sm font-semibold text-gray-800 dark:text-white/90">
+                                                    {(() => {
+                                                        const m = models.find((x) => x.model_id === prediction.model_id);
+                                                        return m?.name || prediction.model_id;
+                                                    })()}
+                                                </div>
+                                            </div>
+                                            {canEdit ? (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={openChangeModelModal}
+                                                    disabled={modelsLoading || !!modelsError || models.length === 0}
+                                                >
+                                                    Change model
+                                                </Button>
+                                            ) : null}
                                         </div>
                                         <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                                             Version: <span className="font-mono">{prediction.model_version}</span>
                                         </div>
+                                        <div className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                            ID: <span className="font-mono">{prediction.model_id}</span>
+                                        </div>
+                                        {canEdit && modelsError ? (
+                                            <div className="mt-2 text-xs text-red-600 dark:text-red-300">
+                                                {modelsError}
+                                            </div>
+                                        ) : null}
+                                        {canEdit && !modelsLoading && !modelsError && models.length === 0 ? (
+                                            <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                                                No trained models found for this branch.
+                                            </div>
+                                        ) : null}
                                     </div>
                                     <div
                                         className="rounded-xl border border-gray-200 bg-white p-4 shadow-theme-xs dark:border-gray-800 dark:bg-gray-900">
@@ -1361,6 +1492,60 @@ export default function BranchDetailsPage() {
                                     </Button>
                                 ) : null}
                             </div>
+                        </div>
+                    </Modal>
+
+                    <Modal
+                        isOpen={changeModelModal.isOpen}
+                        onClose={closeChangeModelModal}
+                        className="max-w-lg"
+                    >
+                        <div className="p-6">
+                            <div className="mb-1 text-lg font-semibold text-gray-800 dark:text-white/90">Change model
+                            </div>
+                            <p className="mb-4 text-sm text-gray-500 dark:text-gray-400">
+                                Select which trained model this branch should use for predictions.
+                            </p>
+
+                            <form onSubmit={onChangeModelSubmit} className="space-y-4">
+                                <div>
+                                    <Label>Model</Label>
+                                    <select
+                                        className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-800 shadow-theme-xs focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 dark:border-gray-700 dark:bg-gray-900 dark:text-white/90"
+                                        value={selectedModelId ?? ""}
+                                        onChange={(e) => setSelectedModelId(e.target.value)}
+                                        disabled={changingModel || modelsLoading || !!modelsError}
+                                    >
+                                        <option value="">Default model</option>
+                                        <option value="" disabled>
+                                            {modelsLoading ? "Loading models…" : "Select a model"}
+                                        </option>
+                                        {models.map((m) => (
+                                            <option key={m.model_id} value={m.model_id}>
+                                                {m.name ? `${m.name} ` : ""}{m.version ? `(v${m.version})` : ""}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    {modelsError ? (
+                                        <div className="mt-2 text-xs text-red-600 dark:text-red-300">{modelsError}</div>
+                                    ) : null}
+                                </div>
+
+                                <div className="flex items-center justify-end gap-3">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={closeChangeModelModal}
+                                        disabled={changingModel}
+                                    >
+                                        Cancel
+                                    </Button>
+                                    <Button type="submit" size="sm" disabled={changingModel}>
+                                        {changingModel ? "Saving..." : "Save"}
+                                    </Button>
+                                </div>
+                            </form>
                         </div>
                     </Modal>
                 </>

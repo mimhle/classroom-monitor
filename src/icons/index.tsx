@@ -55,6 +55,8 @@ import VectorNodesIcon from "./vector-nodes.svg";
 import KeyIcon from "./key.svg";
 import UserMultipleIcon from "./user-multiple.svg";
 import UserMultiple2Icon from "./user-multiple-2.svg";
+import DumbbellIcon from "./dumbbell.svg";
+import ClipboardIcon from "./clipboard.svg";
 
 export {
     DownloadIcon,
@@ -114,4 +116,6 @@ export {
     KeyIcon,
     UserMultipleIcon,
     UserMultiple2Icon,
+    DumbbellIcon,
+    ClipboardIcon,
 };

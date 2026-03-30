@@ -6,6 +6,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useSidebar } from "@/context/SidebarContext";
 import {
     ChevronDownIcon,
+    ClipboardIcon,
+    DumbbellIcon,
     GridIcon,
     PlusIcon,
     UserCircleIcon,
@@ -44,6 +46,11 @@ const navItemStatic: NavItem[] = [
         path: "/",
     },
     {
+        icon: <DumbbellIcon/>,
+        name: "Models & training",
+        path: "/training",
+    },
+    {
         icon: <UserMultipleIcon/>,
         name: "Manage users",
         path: "/users",
@@ -52,6 +59,11 @@ const navItemStatic: NavItem[] = [
         icon: <UserMultiple2Icon/>,
         name: "Manage groups",
         path: "/groups",
+    },
+    {
+        icon: <ClipboardIcon/>,
+        name: "Logs",
+        path: "/logs",
     },
     {
         icon: <UserCircleIcon/>,
@@ -78,8 +90,7 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ initialUser }) => {
     const { notify } = useNotification();
 
     const loadBranches = useCallback(async () => {
-        const data = await getBranches();
-        setNavItems(data.data);
+        setNavItems(await getBranches());
     }, []);
 
     useEffect(() => {
@@ -314,6 +325,8 @@ const AppSidebar: React.FC<AppSidebarProps> = ({ initialUser }) => {
             if (item.path === "/") return !isSA;
             if (item.path === "/users") return isAdmin;
             if (item.path === "/groups") return isSA;
+            if (item.path === "/training") return isAdmin;
+            if (item.path === "/logs") return isAdmin;
             return true;
         });
     }, [currentUser]);
