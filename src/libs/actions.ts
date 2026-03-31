@@ -1010,3 +1010,18 @@ export async function getLogs(): Promise<{
         });
     });
 }
+
+export async function exportBranchData(branchId: string, from: string, to: string): Promise<Blob> {
+    return fetch(`/api/branches/${encodeURIComponent(branchId)}/export?from_time=${encodeURIComponent(from)}&to_time=${encodeURIComponent(to)}`, {
+        method: "GET",
+        cache: "no-store",
+    }).then(async (res) => {
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(
+                `Failed to export branch data: ${res.status} ${res.statusText}${text ? ` - ${text}` : ""}`,
+            );
+        }
+        return res.blob();
+    });
+}

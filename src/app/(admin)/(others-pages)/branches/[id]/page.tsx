@@ -10,6 +10,7 @@ import {
     createCamera,
     createSensor,
     deleteBranch,
+    exportBranchData,
     getAllModels,
     getBranch,
     getBranchAlerts,
@@ -37,6 +38,8 @@ import { deriveAlertBadge } from "@/libs/branchStatus";
 import PredictionSparkline from "@/components/charts/sparkline/PredictionSparkline";
 import SensorStatusBadge from "@/components/common/SensorStatusBadge";
 import BranchThresholdsEditor, { type BranchThresholds } from "@/components/branches/BranchThresholdsEditor";
+import DateTimeRangePicker, { type DateTimeRange } from "@/components/form/DateTimeRangePicker";
+import { downloadBlob } from "@/libs/download";
 
 export default function BranchDetailsPage() {
     const params = useParams<{ id: string }>();
@@ -64,6 +67,10 @@ export default function BranchDetailsPage() {
     const [prediction, setPrediction] = useState<BranchPrediction | null>(null);
     const [predictionLoading, setPredictionLoading] = useState(false);
     const [predictionError, setPredictionError] = useState<string | null>(null);
+
+    // Export data state
+    const [exportRange, setExportRange] = useState<DateTimeRange>({ from: null, to: null });
+    const [isExporting, setIsExporting] = useState(false);
 
     // Change model modal/state
     const changeModelModal = useModal(false);
@@ -119,6 +126,51 @@ export default function BranchDetailsPage() {
     const disableAddSensor = useMemo(() => {
         return canEdit && hasSensors;
     }, [canEdit, hasSensors]);
+
+    async function handleExport() {
+        if (!id || !branch) {
+            notify({ variant: "error", title: "Export failed", message: "Missing branch id." });
+            return;
+        }
+
+        const from = exportRange.from;
+        const to = exportRange.to;
+
+        if (!from || !to) {
+            notify({ variant: "error", title: "Select a range", message: "Please pick both a start and end time." });
+            return;
+        }
+
+        if (from.getTime() >= to.getTime()) {
+            notify({ variant: "error", title: "Invalid range", message: "Start time must be before end time." });
+            return;
+        }
+
+        setIsExporting(true);
+        try {
+            const fromIso = from.toISOString();
+            const toIso = to.toISOString();
+            const blob = await exportBranchData(id, fromIso, toIso);
+
+            // Default file name (backend might still provide its own name, but we don't have headers here).
+            const niceFrom = fromIso.replace(/[:.]/g, "-");
+            const niceTo = toIso.replace(/[:.]/g, "-");
+            const filename = `branch-${branch.branch_id}-${niceFrom}_to_${niceTo}.csv`;
+
+            downloadBlob(blob, filename);
+
+            notify({
+                variant: "success",
+                title: "Export started",
+                message: "Your download should begin shortly.",
+            });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to export branch data.";
+            notify({ variant: "error", title: "Export failed", message: msg });
+        } finally {
+            setIsExporting(false);
+        }
+    }
 
     const [thresholdsDraft, setThresholdsDraft] = useState<BranchThresholds | null>(null);
     const [thresholdsDirty, setThresholdsDirty] = useState(false);
@@ -1315,6 +1367,49 @@ export default function BranchDetailsPage() {
                                     </div>
                                 );
                             })}
+                        </div>
+                    </ComponentCard>
+                    <ComponentCard
+                        title="Export data"
+                        desc="Download a CSV export for a selected date/time range."
+                    >
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                            <div className="min-w-0 flex-1">
+                                <DateTimeRangePicker
+                                    id={`branch-export-range-${id}`}
+                                    label="From / To"
+                                    placeholder="Select a date & time range"
+                                    value={exportRange}
+                                    disabled={isExporting}
+                                    onChangeAction={(next) => setExportRange(next)}
+                                />
+                            </div>
+
+                            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                                <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={isExporting || (!exportRange.from && !exportRange.to)}
+                                    onClick={() => setExportRange({ from: null, to: null })}
+                                >
+                                    Clear
+                                </Button>
+                                <Button
+                                    size="sm"
+                                    onClick={handleExport}
+                                    disabled={
+                                        isExporting ||
+                                        !exportRange.from ||
+                                        !exportRange.to ||
+                                        (exportRange.from && exportRange.to && exportRange.from.getTime() >= exportRange.to.getTime())
+                                    }
+                                >
+                                    {isExporting ? "Exporting…" : "Download export"}
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                            Tip: times are sent as UTC (ISO). If your export is large, try a smaller range.
                         </div>
                     </ComponentCard>
                 </div>
